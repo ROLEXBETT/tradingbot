@@ -1,5 +1,5 @@
 python-binance==1.0.16
 pandas==2.2.3
-numpy==2.0.4
+numpy==1.26.4
 ta==0.11.0
 python-dotenv==1.0.0

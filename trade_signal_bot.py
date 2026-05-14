@@ -1,3 +1,4 @@
+import time
 import math
 import os
 from datetime import datetime, timezone
@@ -375,4 +376,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    while True:
+        try:
+            main()
+            print("Sleeping for 5 minutes...\n")
+            time.sleep(300)
+
+        except Exception as e:
+            print(f"Bot crashed: {e}")
+            time.sleep(60)
