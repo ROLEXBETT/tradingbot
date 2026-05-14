@@ -25,6 +25,31 @@ A starter trading analysis bot for Binance that generates formatted signal summa
    python trade_signal_bot.py
    ```
 
+## Automated Scheduling (Windows)
+The bot can run automatically every hour:
+
+1. **One-time setup**: Run the PowerShell script as Administrator:
+   ```powershell
+   .\setup_task.ps1
+   ```
+   This creates a Windows scheduled task called "TradingBotHourly"
+
+2. **Manual control**:
+   - Open Task Scheduler (search in Windows)
+   - Find "TradingBotHourly" task
+   - Enable/Disable as needed
+   - View history and logs
+
+3. **Alternative manual run**:
+   ```bash
+   .\run_bot.bat
+   ```
+
+## Telegram Integration
+The bot automatically sends signals to your Telegram channel. Configure in `config.py`:
+- `TELEGRAM_BOT_TOKEN` - Your bot token from @BotFather
+- `TELEGRAM_CHAT_ID` - Your channel/chat ID
+
 ## Usage
 You can customize the target symbol list and interval in `config.py`.
 

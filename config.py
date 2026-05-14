@@ -4,6 +4,10 @@
 BINANCE_API_KEY = "Yt2f9rTGdw5irKjtKGwbgIjZqHskYNmrucnRolH0CUnbJAxGlx6PEQCAOLcWfDZg"
 BINANCE_API_SECRET = "g06Acs5MturB1cnGEmVUef74T19rT586VEBoqpRWrRVHcRONi18ZIZ9EKjm3DE65"
 
+# Telegram bot configuration
+TELEGRAM_BOT_TOKEN = "8719720883:AAGl5LeaHToZDlNr-c-RK6MtTvu8aSSz3QA"
+TELEGRAM_CHAT_ID = "@GlobalSignalHub1"
+
 # Symbols to evaluate
 SYMBOLS = ["RUNEUSDT", "BTCUSDT", "ETHUSDT", "BNBUSDT"]
 
@@ -18,7 +22,7 @@ CANDLE_LIMIT = 200
 
 # Risk settings
 RISK_PERCENT = 3.0
-LEVERAGE = 50
+LEVERAGE_LEVELS = [10, 25, 50]  # Multiple leverage levels to analyze
 
 # Trading style levels for target generation
 TARGET_MULTIPLIERS = {

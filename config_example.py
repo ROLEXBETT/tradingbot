@@ -18,7 +18,7 @@ CANDLE_LIMIT = 200
 
 # Risk settings
 RISK_PERCENT = 3.0
-LEVERAGE = 50
+LEVERAGE_LEVELS = [10, 25, 50]  # Multiple leverage levels to analyze
 
 # Trading style levels for target generation
 TARGET_MULTIPLIERS = {

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
+import requests
 from binance.client import Client
 from ta.trend import EMAIndicator, MACD
 from ta.momentum import RSIIndicator
@@ -13,12 +14,14 @@ try:
     from config import (
         BINANCE_API_KEY,
         BINANCE_API_SECRET,
+        TELEGRAM_BOT_TOKEN,
+        TELEGRAM_CHAT_ID,
         SYMBOLS,
         FUTURE_TYPE,
         INTERVAL,
         CANDLE_LIMIT,
         RISK_PERCENT,
-        LEVERAGE,
+        LEVERAGE_LEVELS,
         TARGET_MULTIPLIERS,
     )
 except ImportError:
@@ -94,57 +97,32 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def calculate_confidence(row, direction):
-
-    confidence = 0
-
-    # RSI
-    if direction == "Long" and row["rsi"] < 65:
-        confidence += 1
-
-    if direction == "Short" and row["rsi"] > 35:
-        confidence += 1
-
-    # EMA alignment
-    if direction == "Long":
-        if row["ema9"] > row["ema21"] > row["ema50"]:
-            confidence += 2
-
-    if direction == "Short":
-        if row["ema9"] < row["ema21"] < row["ema50"]:
-            confidence += 2
-
-    # MACD confirmation
-    if direction == "Long" and row["macd"] > row["macd_signal"]:
-        confidence += 1
-
-    if direction == "Short" and row["macd"] < row["macd_signal"]:
-        confidence += 1
-
-    # Volume spike
-    if row["volume"] > row["volume_sma"]:
-        confidence += 1
-
-    if confidence >= 5:
-        return "HIGH"
-
-    elif confidence >= 3:
-        return "MEDIUM"
-
-    return "LOW"
-
-
-def build_signal(df: pd.DataFrame, symbol: str) -> dict:
+def build_signal(df: pd.DataFrame, symbol: str, leverage: int) -> dict:
 
     row = df.iloc[-1]
 
     price = row["close"]
+    
+    print(f"📊 Analysis for {symbol}:")
+    print(f"   Current Price: {price:.6f}")
+    print(f"   RSI(14): {row['rsi']:.2f}")
+    print(f"   EMA9: {row['ema9']:.6f}")
+    print(f"   EMA21: {row['ema21']:.6f}")
+    print(f"   EMA50: {row['ema50']:.6f}")
+    print(f"   EMA200: {row['ema200']:.6f}")
+    print(f"   MACD: {row['macd']:.6f} | Signal: {row['macd_signal']:.6f}")
+    print(f"   Volume: {row['volume']:.2f} | SMA(20): {row['volume_sma']:.2f}")
 
     atr = max(row["atr"], price * 0.0012)
+    print(f"   ATR(14): {atr:.6f}")
 
     # Higher timeframe trend filter
     bullish_trend = row["ema50"] > row["ema200"]
     bearish_trend = row["ema50"] < row["ema200"]
+    
+    print(f"\n   📈 Trend Analysis:")
+    print(f"      Bullish (EMA50 > EMA200): {bullish_trend}")
+    print(f"      Bearish (EMA50 < EMA200): {bearish_trend}")
 
     long_bias = (
         bullish_trend
@@ -152,6 +130,13 @@ def build_signal(df: pd.DataFrame, symbol: str) -> dict:
         and row["rsi"] < 75
         and row["macd"] > row["macd_signal"]
     )
+    
+    print(f"\n   🔷 Long Conditions:")
+    print(f"      Bullish trend: {bullish_trend}")
+    print(f"      EMA alignment (9 > 21 > 50): {row['ema9'] > row['ema21'] > row['ema50']}")
+    print(f"      RSI < 75: {row['rsi'] < 75}")
+    print(f"      MACD > Signal: {row['macd'] > row['macd_signal']}")
+    print(f"      Long Signal: {long_bias}")
 
     short_bias = (
         bearish_trend
@@ -159,10 +144,17 @@ def build_signal(df: pd.DataFrame, symbol: str) -> dict:
         and row["rsi"] > 25
         and row["macd"] < row["macd_signal"]
     )
+    
+    print(f"\n   🔶 Short Conditions:")
+    print(f"      Bearish trend: {bearish_trend}")
+    print(f"      EMA alignment (9 < 21 < 50): {row['ema9'] < row['ema21'] < row['ema50']}")
+    print(f"      RSI > 25: {row['rsi'] > 25}")
+    print(f"      MACD < Signal: {row['macd'] < row['macd_signal']}")
+    print(f"      Short Signal: {short_bias}")
 
     if long_bias:
-
         direction = "Long"
+        print(f"\n   ✅ RESULT: LONG Signal Generated")
 
         entry_low = price - atr * 0.4
         entry_high = price + atr * 0.25
@@ -170,8 +162,8 @@ def build_signal(df: pd.DataFrame, symbol: str) -> dict:
         stop_loss = price - atr * 1.4
 
     elif short_bias:
-
         direction = "Short"
+        print(f"\n   ✅ RESULT: SHORT Signal Generated")
 
         entry_low = price - atr * 0.25
         entry_high = price + atr * 0.4
@@ -179,19 +171,12 @@ def build_signal(df: pd.DataFrame, symbol: str) -> dict:
         stop_loss = price + atr * 1.4
 
     else:
-
-        direction = "Neutral"
-
-        entry_low = price - atr * 0.3
-        entry_high = price + atr * 0.3
-
-        stop_loss = price - atr * 1.6
+        print(f"\n   ⚪️ RESULT: NEUTRAL - No clear signal")
+        print(f"   Skipping neutral analysis for {symbol} at {leverage}x")
+        return None
 
     entry_low = max(entry_low, price * 0.95)
     entry_high = min(entry_high, price * 1.05)
-
-    # Confidence scoring
-    confidence = calculate_confidence(row, direction)
 
     # Targets
     targets = []
@@ -205,11 +190,8 @@ def build_signal(df: pd.DataFrame, symbol: str) -> dict:
             if direction == "Long":
                 tp = price + atr * mult
 
-            elif direction == "Short":
-                tp = price - atr * mult
-
             else:
-                tp = price + atr * mult * 0.5
+                tp = price - atr * mult
 
             style_targets.append(round(tp, 6))
 
@@ -218,7 +200,6 @@ def build_signal(df: pd.DataFrame, symbol: str) -> dict:
     return {
         "symbol": symbol,
         "direction": direction,
-        "confidence": confidence,
         "price": round(price, 6),
         "entry_range": (
             round(entry_low, 6),
@@ -226,7 +207,7 @@ def build_signal(df: pd.DataFrame, symbol: str) -> dict:
         ),
         "stop_loss": round(stop_loss, 6),
         "targets": targets,
-        "leverage": LEVERAGE,
+        "leverage": leverage,
         "rsi": round(row["rsi"], 2),
         "ema9": round(row["ema9"], 6),
         "ema21": round(row["ema21"], 6),
@@ -243,7 +224,6 @@ def format_signal(signal: dict) -> str:
 
     lines.append(f"⭕️ COIN: {signal['symbol']}")
     lines.append(f"↔️ SIGNAL TYPE: {signal['direction']}")
-    lines.append(f"🔥 CONFIDENCE: {signal['confidence']}")
     lines.append(f"🔰 LEVERAGE: {signal['leverage']}x cross")
     lines.append("👽 EXCHANGE: Binance Futures")
 
@@ -291,6 +271,33 @@ def format_signal(signal: dict) -> str:
     return "\n".join(lines)
 
 
+def send_to_telegram(message: str):
+    url = (
+        f"https://api.telegram.org/bot"
+        f"{TELEGRAM_BOT_TOKEN}/sendMessage"
+    )
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+    }
+
+    try:
+        response = requests.post(url, data=payload)
+
+        if response.status_code == 200:
+            print("Signal sent to Telegram successfully.")
+
+        else:
+            print(
+                f"Telegram error: "
+                f"{response.status_code} - {response.text}"
+            )
+
+    except Exception as exc:
+        print(f"Telegram send failed: {exc}")
+
+
 def main():
 
     api_key = BINANCE_API_KEY
@@ -311,6 +318,8 @@ def main():
 
     print("Starting Binance trading signal analysis...\n")
 
+    all_signals = []
+
     for symbol in SYMBOLS:
 
         try:
@@ -324,15 +333,45 @@ def main():
 
             df = compute_indicators(df)
 
-            signal = build_signal(df, symbol)
+            for leverage in LEVERAGE_LEVELS:
 
-            print(format_signal(signal))
+                signal = build_signal(df, symbol, leverage)
+                if signal is None:
+                    continue
 
-            print("\n" + "-" * 76 + "\n")
+                formatted_signal = format_signal(signal)
+
+                print(formatted_signal)
+
+                send_to_telegram(formatted_signal)
+
+                print("\n" + "-" * 76 + "\n")
+
+                all_signals.append(signal)
 
         except Exception as exc:
+            print(f"❌ Failed to analyze {symbol}: {exc}\n")
 
-            print(f"Failed to analyze {symbol}: {exc}\n")
+    # Print top 2 most confident signals
+    print("\n" + "=" * 76)
+    print("🌟 TOP 2 SIGNALS 🌟")
+    print("=" * 76 + "\n")
+
+    # Sort by symbol name
+    if not all_signals:
+        print("No Long/Short signals were generated.")
+        return
+
+    sorted_signals = sorted(
+        all_signals,
+        key=lambda x: x["symbol"]
+    )
+
+    for idx, signal in enumerate(sorted_signals[:2], 1):
+        print(f"#{idx} - {signal['symbol']} @ {signal['leverage']}x")
+        formatted = format_signal(signal)
+        print(formatted)
+        print("\n" + "-" * 76 + "\n")
 
 
 if __name__ == "__main__":
