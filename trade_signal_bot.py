@@ -1,7 +1,10 @@
+import json
+import sys
 import time
 import math
 import os
 from datetime import datetime, timezone
+from typing import Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -24,11 +27,82 @@ try:
         RISK_PERCENT,
         LEVERAGE_LEVELS,
         TARGET_MULTIPLIERS,
+        MAX_SIGNALS_PER_DAY,
+        MORNING_SIGNAL_WINDOW,
+        EVENING_SIGNAL_WINDOW,
+        STATE_FILE,
+        MANUAL_OVERRIDE_FLAG,
     )
 except ImportError:
     raise SystemExit(
         "Please copy config_example.py to config.py and add your Binance API credentials."
     )
+
+
+def load_state() -> dict:
+    if not os.path.exists(STATE_FILE):
+        return {
+            "last_reset_date": datetime.now(timezone.utc).date().isoformat(),
+            "signals_sent_today": 0,
+            "morning_signal_sent": False,
+            "evening_signal_sent": False,
+        }
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as fp:
+            state = json.load(fp)
+
+        state["last_reset_date"] = datetime.fromisoformat(
+            state.get("last_reset_date", datetime.now(timezone.utc).date().isoformat())
+        ).date().isoformat()
+        state.setdefault("signals_sent_today", 0)
+        state.setdefault("morning_signal_sent", False)
+        state.setdefault("evening_signal_sent", False)
+
+        return state
+    except Exception:
+        return {
+            "last_reset_date": datetime.now(timezone.utc).date().isoformat(),
+            "signals_sent_today": 0,
+            "morning_signal_sent": False,
+            "evening_signal_sent": False,
+        }
+
+
+def save_state(state: dict):
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as fp:
+            json.dump(state, fp)
+    except Exception as exc:
+        print(f"⚠️ Unable to save state: {exc}")
+
+
+def within_time_window(now: datetime, window: Tuple[str, str]) -> bool:
+    start_hour, start_minute = map(int, window[0].split(":"))
+    end_hour, end_minute = map(int, window[1].split(":"))
+    start = now.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+    end = now.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+
+    if start <= end:
+        return start <= now <= end
+
+    return now >= start or now <= end
+
+
+def get_current_window(now: datetime, state: dict) -> Optional[str]:
+    if (
+        not state["morning_signal_sent"]
+        and within_time_window(now, MORNING_SIGNAL_WINDOW)
+    ):
+        return "morning"
+
+    if (
+        not state["evening_signal_sent"]
+        and within_time_window(now, EVENING_SIGNAL_WINDOW)
+    ):
+        return "evening"
+
+    return None
 
 
 # =========================
@@ -363,10 +437,16 @@ def send_to_telegram(message: str):
         print(f"Telegram send failed: {exc}")
 
 
-def run_bot():
+def run_bot(is_manual: bool = False):
 
     global signals_sent_today
     global last_reset_date
+
+    state = load_state()
+    last_reset_date = datetime.fromisoformat(
+        state["last_reset_date"]
+    ).date()
+    signals_sent_today = state["signals_sent_today"]
 
     current_date = datetime.now(
         timezone.utc
@@ -375,20 +455,41 @@ def run_bot():
     # Reset every new day
     if current_date != last_reset_date:
 
+        state["last_reset_date"] = current_date.isoformat()
+        state["signals_sent_today"] = 0
+        state["morning_signal_sent"] = False
+        state["evening_signal_sent"] = False
+
         signals_sent_today = 0
         last_reset_date = current_date
 
         print("✅ Daily signal counter reset.")
+        save_state(state)
 
-    # Stop after 2 signals
-    if signals_sent_today >= 2:
+    if signals_sent_today >= MAX_SIGNALS_PER_DAY:
 
         print(
-            "⚠️ Daily limit reached "
-            "(2 signals sent today)."
+            f"⚠️ Daily limit reached "
+            f"({MAX_SIGNALS_PER_DAY} signals sent today)."
         )
 
         return
+
+    current_window = None
+    if not is_manual:
+        current_window = get_current_window(
+            datetime.now(timezone.utc),
+            state
+        )
+
+        if current_window is None:
+            print(
+                "⏳ No scheduled signal window is open right now."
+            )
+            print(
+                "Waiting for the morning or evening window before sending signals."
+            )
+            return
 
     api_key = BINANCE_API_KEY
     api_secret = BINANCE_API_SECRET
@@ -410,7 +511,7 @@ def run_bot():
 
     for symbol in SYMBOLS:
 
-        if signals_sent_today >= 2:
+        if signals_sent_today >= MAX_SIGNALS_PER_DAY:
             break
 
         try:
@@ -428,7 +529,7 @@ def run_bot():
 
             for leverage in LEVERAGE_LEVELS:
 
-                if signals_sent_today >= 2:
+                if signals_sent_today >= MAX_SIGNALS_PER_DAY:
                     break
 
                 signal = build_signal(
@@ -451,6 +552,12 @@ def run_bot():
                 )
 
                 signals_sent_today += 1
+                state["signals_sent_today"] = signals_sent_today
+
+                if not is_manual and current_window:
+                    state[f"{current_window}_signal_sent"] = True
+
+                save_state(state)
 
                 found_signal = True
 
@@ -465,6 +572,10 @@ def run_bot():
                 )
 
                 time.sleep(10)
+                break
+
+            if found_signal:
+                break
 
         except Exception as exc:
 
@@ -483,11 +594,18 @@ def run_bot():
 
 if __name__ == "__main__":
 
+    manual_run = MANUAL_OVERRIDE_FLAG in sys.argv[1:]
+    if manual_run:
+        print(
+            "⚠️ Manual override enabled: "
+            "scheduled windows are bypassed."
+        )
+
     while True:
 
         try:
 
-            run_bot()
+            run_bot(manual_run)
 
             print(
                 "\n😴 Sleeping for "

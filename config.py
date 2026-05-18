@@ -30,3 +30,14 @@ TARGET_MULTIPLIERS = {
     "day": [3.5, 5.0, 6.5],
     "swing": [8.5, 10.5],
 }
+
+# Limit total signals per day and define preferred signal windows.
+MAX_SIGNALS_PER_DAY = 2
+MORNING_SIGNAL_WINDOW = ("06:00", "10:00")
+EVENING_SIGNAL_WINDOW = ("16:00", "20:00")
+
+# Optional persistent state file for daily signal tracking.
+STATE_FILE = "signal_state.json"
+
+# Manual override when running the script yourself.
+MANUAL_OVERRIDE_FLAG = "--manual"
