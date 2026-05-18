@@ -1,0 +1,14 @@
+{
+  "builds": [
+    {
+      "src": "trade_signal_bot.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "trade_signal_bot.py"
+    }
+  ]
+}
