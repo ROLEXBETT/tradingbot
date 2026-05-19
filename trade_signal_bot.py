@@ -117,7 +117,18 @@ def load_klines(client, symbol, interval, limit):
     ].astype(float)
 
     df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
+    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms")
     return df
+
+
+def interval_to_minutes(interval: str) -> int:
+    if interval.endswith("m"):
+        return int(interval[:-1])
+    if interval.endswith("h"):
+        return int(interval[:-1]) * 60
+    if interval.endswith("d"):
+        return int(interval[:-1]) * 60 * 24
+    return 60
 
 
 def compute_indicators(df):
@@ -149,6 +160,17 @@ def get_current_price(client, symbol):
 def build_signal(df, symbol, leverage):
     row = df.iloc[-1]
     price = row["close"]
+
+    latest_close = df["close_time"].iloc[-1]
+    now = datetime.now(timezone.utc)
+    interval_minutes = interval_to_minutes(INTERVAL)
+
+    if now > latest_close + pd.Timedelta(minutes=interval_minutes + 8):
+        print(
+            f"⚠️ Stale signal data for {symbol}: latest candle closed at "
+            f"{latest_close.isoformat()}, skipping."
+        )
+        return None
 
     if pd.isna(row["ema200"]) or pd.isna(row["volume_sma"]) or pd.isna(row["atr"]):
         return None
