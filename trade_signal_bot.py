@@ -244,15 +244,10 @@ def build_signal(df, symbol, leverage):
 
 def format_signal(signal):
     return f"""
-🚨 HIGH-QUALITY TRADE SIGNAL 🚨
+🎯 NEW SIGNAL ALERT! ✅
 
-⭕️ COIN: {signal['symbol']}
-↔️ SIGNAL TYPE: {signal['direction']}
-🔰 LEVERAGE: {signal['leverage']}x cross
-👽 EXCHANGE: Binance
-
-♻️ Entry Point:
-{signal['entry_range'][1]} - {signal['entry_range'][0]}
+{signal['symbol']} {signal['direction']}
+🔰 Leverage: {signal['leverage']}x
 
 🎯 TP1: {signal['tp1']}
 🏁 Final TP: {signal['final_tp']}
@@ -260,9 +255,35 @@ def format_signal(signal):
 
 📊 RSI: {signal['rsi']}
 🧮 ATR: {signal['atr']}
-🕒 Generated at: {signal['opened_at']}
+⏰ {signal['opened_at']}
 
 ⚠️ Not financial advice. Manage your risk.
+""".strip()
+
+
+def format_trade_update(trade, current_price, event_label, pnl_percent, hit_count=None):
+    total_tps = len(trade.get("targets", []))
+    hit_count = hit_count if hit_count is not None else (
+        total_tps if event_label == "FINAL TP" else 1
+    )
+    now = datetime.now(timezone.utc)
+    timestamp = f"{now.month}/{now.day}/{now.year}, {now.strftime('%I:%M:%S %p').lstrip('0')}"
+
+    title = f"🎯 {event_label} HIT! ✅"
+    if event_label == "STOP LOSS":
+        title = "🔴 STOP LOSS HIT"
+
+    return f"""
+{title}
+
+{trade['symbol']} {trade['direction']}
+🎯 {event_label}: {current_price}
+💲 Current: {current_price}
+📊 P&L: {pnl_percent:+.2f}%
+⚡ Leverage: {trade['leverage']}x
+✅ {hit_count}/{total_tps} TPs reached
+⏰ {timestamp}
+📺 Binance Futures SIGNALS
 """.strip()
 
 
@@ -312,61 +333,65 @@ def calculate_pnl_percent(trade, close_price):
     return round(raw_percent * leverage, 2)
 
 
-def create_result_card(trade, pnl_percent):
-    width = 900
+def create_result_card(trade, pnl_percent, current_price, event_label="CLOSED"):
+    width = 1000
     height = 1200
 
-    img = Image.new("RGB", (width, height), color=(8, 15, 32))
+    img = Image.new("RGB", (width, height), color=(12, 16, 38))
     draw = ImageDraw.Draw(img)
 
     try:
         font_big = ImageFont.truetype("arial.ttf", 90)
-        font_medium = ImageFont.truetype("arial.ttf", 48)
-        font_small = ImageFont.truetype("arial.ttf", 32)
+        font_medium = ImageFont.truetype("arial.ttf", 56)
+        font_small = ImageFont.truetype("arial.ttf", 38)
+        font_xsmall = ImageFont.truetype("arial.ttf", 28)
     except Exception:
         font_big = ImageFont.load_default()
         font_medium = ImageFont.load_default()
         font_small = ImageFont.load_default()
+        font_xsmall = ImageFont.load_default()
 
     symbol_text = trade["symbol"].replace("USDT", "/USDT")
-    status = trade["close_reason"]
-
+    status = trade.get("close_reason", event_label)
     pnl_text = f"{pnl_percent:+.2f}%"
+    status_color = (0, 255, 140) if pnl_percent >= 0 else (255, 90, 90)
+    event_title = f"{event_label} HIt!" if event_label not in ["STOP LOSS", "BREAKEVEN"] else event_label
 
-    draw.rounded_rectangle((40, 40, width - 40, height - 40), radius=35, fill=(13, 24, 52))
+    draw.rectangle((0, 0, width, height), fill=(8, 12, 32))
+    draw.rectangle((40, 40, width - 40, 240), fill=(15, 25, 70))
+    draw.text((70, 60), "Binance Futures SIGNALS", fill=(150, 190, 255), font=font_small)
+    draw.text((70, 120), symbol_text, fill=(255, 255, 255), font=font_big)
+    draw.text((70, 210), f"{trade['direction'].upper()} • {trade['leverage']}x", fill=(120, 255, 190), font=font_medium)
 
-    draw.text((70, 80), symbol_text, fill=(255, 255, 255), font=font_medium)
-    draw.text((70, 160), f"{trade['direction'].upper()} • {trade['leverage']}x", fill=(120, 255, 190), font=font_small)
+    draw.rectangle((40, 270, width - 40, 560), fill=(17, 26, 90), radius=30)
+    draw.text((70, 300), pnl_text, fill=status_color, font=font_big)
+    draw.text((70, 420), "REALIZED PNL" if event_label in ["FINAL TP", "TP1"] else "P&L", fill=(204, 214, 230), font=font_small)
+    draw.text((70, 470), f"{event_label} • {current_price}", fill=(190, 210, 255), font=font_small)
 
-    draw.text((70, 280), pnl_text, fill=(0, 255, 140), font=font_big)
-    draw.text((75, 390), "REALIZED PNL", fill=(180, 190, 210), font=font_small)
-
-    draw.line((70, 490, width - 70, 490), fill=(50, 70, 110), width=3)
+    draw.line((70, 590, width - 70, 590), fill=(50, 70, 110), width=3)
 
     rows = [
         ("ENTRY", trade["entry_price"]),
-        ("CLOSE", trade["close_price"]),
+        ("CURRENT", current_price),
         ("TP1", trade["tp1"]),
         ("FINAL TP", trade["final_tp"]),
         ("STOP", trade["stop_loss"]),
         ("STATUS", status),
     ]
 
-    y = 560
+    y = 620
 
     for label, value in rows:
-        draw.text((80, y), str(label), fill=(140, 150, 175), font=font_small)
-        draw.text((420, y), str(value), fill=(255, 255, 255), font=font_small)
-        y += 75
+        draw.text((70, y), str(label), fill=(160, 170, 195), font=font_small)
+        draw.text((360, y), str(value), fill=(255, 255, 255), font=font_small)
+        y += 70
 
-    draw.line((70, 1010, width - 70, 1010), fill=(50, 70, 110), width=3)
-
-    draw.text((80, 1060), "BINANCE CRYPTO SIGNALS", fill=(0, 255, 140), font=font_small)
-    draw.text((80, 1110), "Not financial advice. Manage your risk.", fill=(150, 160, 180), font=font_small)
+    draw.line((70, 1040, width - 70, 1040), fill=(50, 70, 110), width=3)
+    draw.text((70, 1060), "Accurate signals • Smart trading • Max profits", fill=(120, 170, 230), font=font_xsmall)
 
     os.makedirs("result_cards", exist_ok=True)
-
-    path = f"result_cards/{trade['id']}.png"
+    sanitized_label = event_label.replace(" ", "_").replace("/", "_")
+    path = f"result_cards/{trade['id']}_{sanitized_label}.png"
     img.save(path)
 
     return path
@@ -420,11 +445,24 @@ def track_open_trades(client):
             if not trade["tp1_hit"] and tp1_hit_now:
                 trade["tp1_hit"] = True
                 trade["stop_loss"] = trade["breakeven_stop"]
-
-                send_message_to_telegram(
-                    f"✅ TP1 HIT for {trade['symbol']}\n"
-                    f"Stop loss moved to breakeven: {trade['stop_loss']}"
+                pnl = calculate_pnl_percent(trade, current_price)
+                message = format_trade_update(
+                    trade,
+                    current_price,
+                    "TP1",
+                    pnl,
+                    hit_count=1,
                 )
+                print(message)
+                send_message_to_telegram(message)
+
+                card_path = create_result_card(
+                    trade,
+                    pnl,
+                    current_price,
+                    event_label="TP1"
+                )
+                send_photo_to_telegram(card_path, f"✅ TP1 HIT • {trade['symbol']} • {pnl:+.2f}%")
 
                 updated_open_trades.append(trade)
                 continue
@@ -440,8 +478,23 @@ def track_open_trades(client):
 
                 closed_trades.append(trade)
 
-                card_path = create_result_card(trade, pnl)
-                send_photo_to_telegram(card_path, f"✅ {trade['symbol']} CLOSED • {pnl:+.2f}%")
+                message = format_trade_update(
+                    trade,
+                    current_price,
+                    "FINAL TP",
+                    pnl,
+                    hit_count=len(trade.get("targets", [])),
+                )
+                print(message)
+                send_message_to_telegram(message)
+
+                card_path = create_result_card(
+                    trade,
+                    pnl,
+                    current_price,
+                    event_label="FINAL TP"
+                )
+                send_photo_to_telegram(card_path, f"✅ {trade['symbol']} FINAL TP • {pnl:+.2f}%")
 
                 continue
 
@@ -452,15 +505,34 @@ def track_open_trades(client):
 
                 if trade["tp1_hit"]:
                     trade["close_reason"] = "BREAKEVEN AFTER TP1"
+                    event_label = "BREAKEVEN"
+                    hit_count = 1
                 else:
                     trade["close_reason"] = "STOP LOSS HIT"
+                    event_label = "STOP LOSS"
+                    hit_count = 0
 
                 pnl = calculate_pnl_percent(trade, current_price)
                 trade["pnl_percent"] = pnl
 
                 closed_trades.append(trade)
 
-                card_path = create_result_card(trade, pnl)
+                message = format_trade_update(
+                    trade,
+                    current_price,
+                    event_label,
+                    pnl,
+                    hit_count=hit_count,
+                )
+                print(message)
+                send_message_to_telegram(message)
+
+                card_path = create_result_card(
+                    trade,
+                    pnl,
+                    current_price,
+                    event_label=event_label
+                )
                 send_photo_to_telegram(card_path, f"📊 {trade['symbol']} CLOSED • {pnl:+.2f}%")
 
                 continue
