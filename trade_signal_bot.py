@@ -3,15 +3,37 @@ import json
 import time
 import requests
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from io import BytesIO
+import numpy as np
 
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta  # Fixed: timeDelta -> timedelta
 from zoneinfo import ZoneInfo
 
-from config import (
+# PREVENT MULTIPLE INSTANCES (Simple file method - works on all platforms)
+import os
+import time  # ADD THIS - missing time import
+
+LOCK_FILE = "bot.lock"
+
+if os.path.exists(LOCK_FILE):
+    file_age = time.time() - os.path.getmtime(LOCK_FILE)
+    if file_age < 3600:  # 1 hour
+        print("❌ Another instance of the bot is already running! Exiting.")  # Fixed: X -> ❌
+        print("   If you're sure no other instance is running, delete bot.lock file")
+        sys.exit(1)
+    else:
+        os.remove(LOCK_FILE)
+
+with open(LOCK_FILE, 'w') as f:  # Fixed: （ -> (, 'w') as f -> 'w') as f
+    f.write(str(os.getpid()))
+
+from config import (  # Fixed: ( -> (
     BINANCE_API_KEY,
-    BINANCE_API_SECRET,
-    TELEGRAM_BOT_TOKEN,
+    BINANCE_API_SECRET,  # Fixed: BINANCE API SECRET -> BINANCE_API_SECRET
+    TELEGRAM_BOT_TOKEN,  # Fixed: TEIEGRAM BOT TOKEN -> TELEGRAM_BOT_TOKEN
     TELEGRAM_CHAT_ID,
     SYMBOLS,
     FUTURE_TYPE,
@@ -39,8 +61,11 @@ from config import (
     CLOSE_TRADE_ON_FINAL_TP,
 )
 
-
 TZ = ZoneInfo(BOT_TIMEZONE)
+
+# Additional strict limits
+MAX_SIGNALS_PER_SYMBOL = getattr(__import__('config'), 'MAX_SIGNALS_PER_SYMBOL', 1)
+SIGNAL_COOLDOWN_SECONDS = getattr(__import__('config'), 'SIGNAL_COOLDOWN_SECONDS', 3600)
 
 
 # -----------------------------
@@ -83,7 +108,9 @@ def load_signal_state():
         {
             "date": today_key(),
             "signals_sent_today": 0,
-            "posted_signal_keys": []
+            "posted_signal_keys": [],
+            "last_signal_time": None,
+            "symbol_signal_count": {}
         }
     )
 
@@ -91,15 +118,20 @@ def load_signal_state():
         state = {
             "date": today_key(),
             "signals_sent_today": 0,
-            "posted_signal_keys": []
+            "posted_signal_keys": [],
+            "last_signal_time": None,
+            "symbol_signal_count": {}
         }
         save_signal_state(state)
 
     if "posted_signal_keys" not in state:
         state["posted_signal_keys"] = []
-
     if "signals_sent_today" not in state:
         state["signals_sent_today"] = 0
+    if "symbol_signal_count" not in state:
+        state["symbol_signal_count"] = {}
+    if "last_signal_time" not in state:
+        state["last_signal_time"] = None
 
     return state
 
@@ -119,15 +151,57 @@ def already_posted_signal(signal_key):
     return signal_key in state.get("posted_signal_keys", [])
 
 
-def mark_signal_posted(signal_key):
+def can_post_for_symbol(symbol):
     state = load_signal_state()
-    state["signals_sent_today"] += 1
+    symbol_count = state.get("symbol_signal_count", {}).get(symbol, 0)
+    return symbol_count < MAX_SIGNALS_PER_SYMBOL
 
+
+def is_cooldown_active():
+    state = load_signal_state()
+    last_time = state.get("last_signal_time")
+    if last_time is None:
+        return False
+    
+    last_dt = datetime.fromisoformat(last_time)
+    cooldown_until = last_dt + timedelta(seconds=SIGNAL_COOLDOWN_SECONDS)
+    return now_local() < cooldown_until
+
+
+def get_cooldown_remaining():
+    state = load_signal_state()
+    last_time = state.get("last_signal_time")
+    if last_time is None:
+        return 0
+    
+    last_dt = datetime.fromisoformat(last_time)
+    cooldown_until = last_dt + timedelta(seconds=SIGNAL_COOLDOWN_SECONDS)
+    remaining = (cooldown_until - now_local()).total_seconds()
+    return max(0, int(remaining / 60))
+
+
+def mark_signal_posted(signal_key, symbol):
+    state = load_signal_state()
+    
+    if signal_key in state.get("posted_signal_keys", []):
+        return
+
+    state["signals_sent_today"] += 1
+    
+    if "symbol_signal_count" not in state:
+        state["symbol_signal_count"] = {}
+    state["symbol_signal_count"][symbol] = state["symbol_signal_count"].get(symbol, 0) + 1
+    
+    state["last_signal_time"] = now_local().isoformat()
+    
     if "posted_signal_keys" not in state:
         state["posted_signal_keys"] = []
-
     state["posted_signal_keys"].append(signal_key)
+    
     save_signal_state(state)
+    
+    print(f"Signal posted. Daily total: {state['signals_sent_today']}/{MAX_SIGNALS_PER_DAY}")
+    print(f"Cooldown active for {SIGNAL_COOLDOWN_SECONDS // 60} minutes")
 
 
 # -----------------------------
@@ -494,7 +568,122 @@ def close_trade(trade, result, close_price):
 
 
 # -----------------------------
-# Telegram
+# Telegram - Result Cards (Images)
+# -----------------------------
+
+def calculate_pnl_percent(trade, current_price):
+    entry = get_trade_entry(trade)
+    side = get_trade_side(trade)
+    
+    if side == "LONG":
+        pnl_percent = ((current_price - entry) / entry) * 100
+    else:
+        pnl_percent = ((entry - current_price) / entry) * 100
+    
+    leverage = trade.get("leverage", 10)
+    return pnl_percent * leverage
+
+
+def create_result_card(trade, pnl_percent, current_price, event_label):
+    fig, ax = plt.subplots(figsize=(10, 8))
+    fig.patch.set_facecolor('#1a1a2e')
+    ax.set_facecolor('#16213e')
+    
+    ax.axis('off')
+    
+    entry = get_trade_entry(trade)
+    side = get_trade_side(trade)
+    stop_loss = trade["stop_loss"]
+    targets_hit = len(trade.get("targets_hit", []))
+    total_targets = len(trade["targets"])
+    
+    if "STOP" in event_label or "LOSS" in event_label:
+        result_color = '#e94560'
+        result_text = "STOP LOSS"
+        result_emoji = "❌"
+        bg_color = '#2a1a2e'
+    elif "FINAL" in event_label or "ALL" in event_label:
+        result_color = '#4ecdc4'
+        result_text = "ALL TARGETS HIT"
+        result_emoji = "🏁"
+        bg_color = '#1a2e2a'
+    else:
+        result_color = '#0f3460'
+        result_text = f"{event_label} HIT"
+        result_emoji = "✅"
+        bg_color = '#1a2a3e'
+    
+    pnl_sign = '+' if pnl_percent >= 0 else ''
+    exchange_text = "BINANCE FUTURES"
+    
+    info_lines = [
+        f"{result_emoji} {result_text} {result_emoji}",
+        "",
+        f"{trade['symbol']} • {side} • {trade.get('leverage', 10)}x",
+        f"{exchange_text}",
+        "",
+        f"📊 P&L: {pnl_sign}{pnl_percent:.2f}%",
+        f"🎯 Targets: {targets_hit}/{total_targets}",
+        "",
+        f"💰 Entry: {format_price(entry)}",
+        f"💵 Current: {format_price(current_price)}",
+        f"🛑 Stop Loss: {format_price(stop_loss)}",
+        "",
+        f"📈 RSI: {trade.get('rsi', 0):.1f}",
+        f"⚡ Confidence: {trade.get('confidence_score', 0)}/100",
+        "",
+        f"🕐 {now_local().strftime('%Y-%m-%d %H:%M:%S')}"
+    ]
+    
+    info_text = "\n".join(info_lines)
+    
+    ax.text(0.5, 0.5, info_text, 
+            transform=ax.transAxes,
+            fontsize=12,
+            verticalalignment='center',
+            horizontalalignment='center',
+            fontfamily='monospace',
+            color='white',
+            bbox=dict(boxstyle='round,pad=0.8', facecolor=bg_color, alpha=0.9, edgecolor=result_color, linewidth=3))
+    
+    ax.text(0.5, 0.92, f"🚨 {trade['symbol']} TRADE RESULT 🚨",
+            transform=ax.transAxes,
+            fontsize=16,
+            fontweight='bold',
+            horizontalalignment='center',
+            color=result_color)
+    
+    ax.text(0.5, 0.08, "⚡ Automated Trading Signal Bot",
+            transform=ax.transAxes,
+            fontsize=8,
+            horizontalalignment='center',
+            color='#666666',
+            alpha=0.7)
+    
+    buf = BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='#1a1a2e')
+    buf.seek(0)
+    plt.close()
+    
+    return buf
+
+
+def send_photo_to_telegram(photo_bytes, caption=None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    
+    files = {'photo': photo_bytes}
+    data = {'chat_id': TELEGRAM_CHAT_ID}
+    
+    if caption:
+        data['caption'] = caption
+    
+    response = requests.post(url, data=data, files=files, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
+# -----------------------------
+# Telegram - Text Messages
 # -----------------------------
 
 def format_price(value):
@@ -576,7 +765,7 @@ def format_tp_hit_message(trade, target_index, target_price, current_price):
     targets_hit = len(trade.get("targets_hit", []))
 
     message = f"""
-✅ TARGET HIT ✅
+✅ TARGET {target_index} HIT ✅
 
 Pair: {trade["symbol"]}
 Direction: {side}
@@ -627,19 +816,21 @@ Trade closed.
 def format_final_target_message(trade, current_price):
     side = trade.get("side") or trade.get("direction")
     entry = get_trade_entry(trade)
+    pnl = calculate_pnl_percent(trade, current_price)
+    pnl_sign = '+' if pnl >= 0 else ''
 
     message = f"""
-🏁 TRADE CLOSED IN PROFIT 🏁
+🏁 TRADE COMPLETED - ALL TARGETS HIT 🏁
 
 Pair: {trade["symbol"]}
 Direction: {side}
 
-All targets hit.
-
 Entry: {format_price(entry)}
 Final Price: {format_price(current_price)}
 
-Result: ✅ Full TP completed
+Total P&L: {pnl_sign}{pnl:.2f}% (with {trade.get('leverage', 10)}x leverage)
+
+✅ Full TP completed successfully!
 """.strip()
 
     return message
@@ -701,6 +892,7 @@ def monitor_open_trades():
     for trade in open_trades:
         try:
             if trade.get("status", "OPEN") != "OPEN":
+                updated_open_trades.append(trade)
                 continue
 
             symbol = trade["symbol"]
@@ -715,47 +907,47 @@ def monitor_open_trades():
             targets = [float(t) for t in trade["targets"]]
             current_price = fetch_current_price(symbol)
 
-            # Proximity alerts: notify when price is within PROXIMITY_PERCENT of any TP or the stop
+            # Proximity alerts
             try:
                 proximity_list = trade.get("proximity_alerts", [])
 
-                # targets proximity
                 for idx, target_price in enumerate(targets, start=1):
                     if idx in proximity_list:
                         continue
                     if abs(current_price - target_price) / target_price <= (PROXIMITY_PERCENT / 100.0):
                         pnl_now = calculate_pnl_percent(trade, current_price)
+                        
                         msg = format_tp_hit_message(trade, target_index=idx, target_price=target_price, current_price=current_price)
-                        # reuse TP message format but mark as NEAR instead of hit
-                        msg = msg.replace("TP", "NEAR TP")
-                        print(msg)
+                        msg = msg.replace("TARGET", "NEAR TARGET")
                         send_telegram_message(msg)
-                        # save small card
+                        
                         try:
-                            card = create_result_card(trade, pnl_now, current_price, event_label=f"NEAR_TP_{idx}")
+                            card = create_result_card(trade, pnl_now, current_price, f"NEAR_TP_{idx}")
                             send_photo_to_telegram(card, f"⚡ Near TP{idx} • {trade['symbol']} • {pnl_now:+.2f}%")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"Failed to send proximity image: {e}")
+                        
                         proximity_list.append(idx)
 
-                # stop proximity
                 if not trade.get("stop_proximity_notified", False):
                     if abs(current_price - stop_loss) / stop_loss <= (PROXIMITY_PERCENT / 100.0):
                         pnl_now = calculate_pnl_percent(trade, current_price)
+                        
                         msg = format_stop_loss_message(trade, current_price)
                         msg = msg.replace("STOP LOSS", "NEAR STOP")
-                        print(msg)
                         send_telegram_message(msg)
+                        
                         try:
-                            card = create_result_card(trade, pnl_now, current_price, event_label="NEAR_STOP")
+                            card = create_result_card(trade, pnl_now, current_price, "NEAR_STOP")
                             send_photo_to_telegram(card, f"⚠️ Near Stop • {trade['symbol']} • {pnl_now:+.2f}%")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"Failed to send stop proximity image: {e}")
+                        
                         trade["stop_proximity_notified"] = True
 
                 trade["proximity_alerts"] = proximity_list
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Proximity alert error: {e}")
 
             if "targets_hit" not in trade:
                 trade["targets_hit"] = []
@@ -764,8 +956,16 @@ def monitor_open_trades():
 
             # Stop loss check
             if is_stop_loss_hit(side, current_price, stop_loss):
-                message = format_stop_loss_message(trade, current_price)
-                send_telegram_message(message)
+                pnl_percent = calculate_pnl_percent(trade, current_price)
+                
+                text_message = format_stop_loss_message(trade, current_price)
+                send_telegram_message(text_message)
+                
+                try:
+                    card = create_result_card(trade, pnl_percent, current_price, "STOP_LOSS")
+                    send_photo_to_telegram(card, f"❌ {trade['symbol']} STOP LOSS • {pnl_percent:+.2f}%")
+                except Exception as e:
+                    print(f"Failed to send SL image: {e}")
 
                 close_trade(
                     trade=trade,
@@ -773,11 +973,11 @@ def monitor_open_trades():
                     close_price=current_price
                 )
 
-                print(f"{symbol}: stop loss hit. Trade closed.")
+                print(f"{symbol}: stop loss hit at {current_price} (PnL: {pnl_percent:.2f}%). Trade closed.")
                 time.sleep(2)
                 continue
 
-            # Target check
+            # Target checks
             new_target_hits = []
 
             for index, target_price in enumerate(targets, start=1):
@@ -792,21 +992,37 @@ def monitor_open_trades():
 
             for target_index, target_price in new_target_hits:
                 if POST_EACH_TP_HIT:
-                    message = format_tp_hit_message(
+                    pnl_percent = calculate_pnl_percent(trade, current_price)
+                    
+                    text_message = format_tp_hit_message(
                         trade=trade,
                         target_index=target_index,
                         target_price=target_price,
                         current_price=current_price
                     )
-
-                    send_telegram_message(message)
-                    print(f"{symbol}: TP{target_index} hit.")
+                    send_telegram_message(text_message)
+                    
+                    try:
+                        card = create_result_card(trade, pnl_percent, current_price, f"TP_{target_index}")
+                        send_photo_to_telegram(card, f"✅ {trade['symbol']} TP{target_index} • {pnl_percent:+.2f}%")
+                    except Exception as e:
+                        print(f"Failed to send TP image: {e}")
+                    
+                    print(f"{symbol}: TP{target_index} hit at {current_price} (PnL: {pnl_percent:.2f}%).")
                     time.sleep(2)
 
             # Close trade if all targets are hit
             if CLOSE_TRADE_ON_FINAL_TP and len(trade["targets_hit"]) == len(targets):
-                message = format_final_target_message(trade, current_price)
-                send_telegram_message(message)
+                pnl_percent = calculate_pnl_percent(trade, current_price)
+                
+                text_message = format_final_target_message(trade, current_price)
+                send_telegram_message(text_message)
+                
+                try:
+                    card = create_result_card(trade, pnl_percent, current_price, "FINAL_TARGET")
+                    send_photo_to_telegram(card, f"🏁 {trade['symbol']} COMPLETED • {pnl_percent:+.2f}%")
+                except Exception as e:
+                    print(f"Failed to send final target image: {e}")
 
                 close_trade(
                     trade=trade,
@@ -814,7 +1030,7 @@ def monitor_open_trades():
                     close_price=current_price
                 )
 
-                print(f"{symbol}: all targets hit. Trade closed.")
+                print(f"{symbol}: all targets hit. Final PnL: {pnl_percent:.2f}%. Trade closed.")
                 time.sleep(2)
                 continue
 
@@ -830,7 +1046,6 @@ def monitor_open_trades():
 # -----------------------------
 # Main scanning logic
 # -----------------------------
-
 def scan_market():
     print(f"\n[{now_local().strftime('%Y-%m-%d %H:%M:%S')}] Scanning market...")
 
@@ -842,12 +1057,22 @@ def scan_market():
         print("Daily signal limit reached. No more signals today.")
         return
 
+    # Check cooldown
+    if is_cooldown_active():
+        remaining_mins = get_cooldown_remaining()
+        print(f"Cooldown active. Next signal allowed in {remaining_mins} minutes.")
+        return
+
     candidates = []
 
     for symbol in SYMBOLS:
         try:
             if has_open_trade_for_symbol(symbol):
                 print(f"{symbol}: skipped because an open trade already exists.")
+                continue
+
+            if not can_post_for_symbol(symbol):
+                print(f"{symbol}: daily limit for this symbol reached.")
                 continue
 
             df = fetch_futures_klines(symbol)
@@ -878,14 +1103,29 @@ def scan_market():
     candidates.sort(key=lambda x: x["confidence_score"], reverse=True)
 
     slots = remaining_daily_slots()
+    if slots <= 0:
+        print("Daily signal limit reached. No more signals today.")
+        return
+
+    if len(candidates) > slots:
+        print(f"Found {len(candidates)} strong candidates, posting the top {slots} now.")
+
     signals_to_post = candidates[:slots]
 
     for signal in signals_to_post:
+        if remaining_daily_slots() <= 0:
+            print("Daily signal limit reached during posting. Stopping.")
+            break
+
+        if is_cooldown_active():
+            print("Cooldown active during posting. Stopping.")
+            break
+
         try:
             message = format_signal_message(signal)
             send_telegram_message(message)
 
-            mark_signal_posted(signal["signal_key"])
+            mark_signal_posted(signal["signal_key"], signal["symbol"])
             add_open_trade(signal)
 
             print(
@@ -902,6 +1142,8 @@ def scan_market():
 def main():
     print("Futures trading signal bot started.")
     print(f"Max signals per day: {MAX_SIGNALS_PER_DAY}")
+    print(f"Max signals per symbol: {MAX_SIGNALS_PER_SYMBOL}")
+    print(f"Signal cooldown: {SIGNAL_COOLDOWN_SECONDS // 60} minutes")
     print(f"Minimum confidence score: {MIN_CONFIDENCE_SCORE}")
     print(f"Timezone: {BOT_TIMEZONE}")
 
