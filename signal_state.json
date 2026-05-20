@@ -1,7 +1,5 @@
 {
-  "last_reset_date": "2026-05-19",
-  "signals_sent_today": 0,
-  "morning_signal_sent": false,
-  "evening_signal_sent": false,
-  "sent_symbols_today": []
+    "date": "2026-05-20",
+    "signals_sent_today": 0,
+    "posted_signal_keys": []
 }

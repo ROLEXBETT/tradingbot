@@ -1,17 +1,12 @@
-import json
 import sys
+import json
 import time
-import os
-from datetime import datetime, timezone
-from typing import Tuple, Optional
-
-import pandas as pd
 import requests
-from binance.client import Client
-from ta.trend import EMAIndicator, MACD
-from ta.momentum import RSIIndicator
-from ta.volatility import AverageTrueRange
-from PIL import Image, ImageDraw, ImageFont
+import pandas as pd
+
+from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from config import (
     BINANCE_API_KEY,
@@ -19,649 +14,929 @@ from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     SYMBOLS,
+    FUTURE_TYPE,
     INTERVAL,
     CANDLE_LIMIT,
+    RISK_PERCENT,
     LEVERAGE_LEVELS,
     TARGET_MULTIPLIERS,
     MAX_SIGNALS_PER_DAY,
+    MIN_CONFIDENCE_SCORE,
     MORNING_SIGNAL_WINDOW,
     EVENING_SIGNAL_WINDOW,
     STATE_FILE,
     MANUAL_OVERRIDE_FLAG,
+    MANUAL_CHECK_FLAG,
+    PROXIMITY_PERCENT,
     OPEN_TRADES_FILE,
     CLOSED_TRADES_FILE,
+    BOT_TIMEZONE,
+    SCAN_INTERVAL_SECONDS,
+    BINANCE_FUTURES_BASE_URL,
+    RESULT_MONITOR_ENABLED,
+    RESULT_CHECK_INTERVAL_SECONDS,
+    POST_EACH_TP_HIT,
+    CLOSE_TRADE_ON_FINAL_TP,
 )
 
 
-def load_json_file(path, default):
-    if not os.path.exists(path):
-        save_json_file(path, default)
-        return default
+TZ = ZoneInfo(BOT_TIMEZONE)
+
+
+# -----------------------------
+# Time and state helpers
+# -----------------------------
+
+def now_local():
+    return datetime.now(TZ)
+
+
+def today_key():
+    return now_local().strftime("%Y-%m-%d")
+
+
+def current_time_hhmm():
+    return now_local().strftime("%H:%M")
+
+
+def read_json_file(file_path, default_value):
+    path = Path(file_path)
+
+    if not path.exists():
+        return default_value
 
     try:
-        with open(path, "r", encoding="utf-8") as fp:
-            return json.load(fp)
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
-        return default
+        return default_value
 
 
-def save_json_file(path, data):
-    with open(path, "w", encoding="utf-8") as fp:
-        json.dump(data, fp, indent=2)
+def write_json_file(file_path, data):
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
 
 
-def load_state():
-    return load_json_file(STATE_FILE, {
-        "last_reset_date": datetime.now(timezone.utc).date().isoformat(),
-        "signals_sent_today": 0,
-        "morning_signal_sent": False,
-        "evening_signal_sent": False,
-        "sent_symbols_today": [],
-    })
+def load_signal_state():
+    state = read_json_file(
+        STATE_FILE,
+        {
+            "date": today_key(),
+            "signals_sent_today": 0,
+            "posted_signal_keys": []
+        }
+    )
+
+    if state.get("date") != today_key():
+        state = {
+            "date": today_key(),
+            "signals_sent_today": 0,
+            "posted_signal_keys": []
+        }
+        save_signal_state(state)
+
+    if "posted_signal_keys" not in state:
+        state["posted_signal_keys"] = []
+
+    if "signals_sent_today" not in state:
+        state["signals_sent_today"] = 0
+
+    return state
 
 
-def save_state(state):
-    save_json_file(STATE_FILE, state)
+def save_signal_state(state):
+    write_json_file(STATE_FILE, state)
 
+
+def remaining_daily_slots():
+    state = load_signal_state()
+    remaining = MAX_SIGNALS_PER_DAY - state["signals_sent_today"]
+    return max(0, remaining)
+
+
+def already_posted_signal(signal_key):
+    state = load_signal_state()
+    return signal_key in state.get("posted_signal_keys", [])
+
+
+def mark_signal_posted(signal_key):
+    state = load_signal_state()
+    state["signals_sent_today"] += 1
+
+    if "posted_signal_keys" not in state:
+        state["posted_signal_keys"] = []
+
+    state["posted_signal_keys"].append(signal_key)
+    save_signal_state(state)
+
+
+# -----------------------------
+# Signal window logic
+# -----------------------------
+
+def time_in_window(current, start, end):
+    return start <= current <= end
+
+
+def is_signal_window_open():
+    current = current_time_hhmm()
+
+    morning_open = time_in_window(
+        current,
+        MORNING_SIGNAL_WINDOW[0],
+        MORNING_SIGNAL_WINDOW[1]
+    )
+
+    evening_open = time_in_window(
+        current,
+        EVENING_SIGNAL_WINDOW[0],
+        EVENING_SIGNAL_WINDOW[1]
+    )
+
+    return morning_open or evening_open
+
+
+def is_manual_mode():
+    return MANUAL_OVERRIDE_FLAG in sys.argv
+
+
+def is_once_mode():
+    return "--once" in sys.argv
+
+
+# -----------------------------
+# Binance data
+# -----------------------------
+
+def fetch_futures_klines(symbol):
+    url = f"{BINANCE_FUTURES_BASE_URL}/fapi/v1/klines"
+
+    params = {
+        "symbol": symbol,
+        "interval": INTERVAL,
+        "limit": CANDLE_LIMIT
+    }
+
+    response = requests.get(url, params=params, timeout=15)
+    response.raise_for_status()
+
+    raw_data = response.json()
+
+    columns = [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "close_time",
+        "quote_asset_volume",
+        "number_of_trades",
+        "taker_buy_base_volume",
+        "taker_buy_quote_volume",
+        "ignore"
+    ]
+
+    df = pd.DataFrame(raw_data, columns=columns)
+
+    numeric_columns = [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "quote_asset_volume",
+        "taker_buy_base_volume",
+        "taker_buy_quote_volume"
+    ]
+
+    for col in numeric_columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
+
+
+def fetch_current_price(symbol):
+    url = f"{BINANCE_FUTURES_BASE_URL}/fapi/v1/premiumIndex"
+
+    params = {
+        "symbol": symbol
+    }
+
+    response = requests.get(url, params=params, timeout=15)
+    response.raise_for_status()
+
+    data = response.json()
+    return float(data["markPrice"])
+
+
+# -----------------------------
+# Indicators
+# -----------------------------
+
+def add_indicators(df):
+    df = df.copy()
+
+    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
+
+    delta = df["close"].diff()
+
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+
+    avg_gain = gain.rolling(14).mean()
+    avg_loss = loss.rolling(14).mean()
+
+    rs = avg_gain / avg_loss
+    df["rsi"] = 100 - (100 / (1 + rs))
+
+    ema12 = df["close"].ewm(span=12, adjust=False).mean()
+    ema26 = df["close"].ewm(span=26, adjust=False).mean()
+
+    df["macd"] = ema12 - ema26
+    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
+
+    high_low = df["high"] - df["low"]
+    high_close = (df["high"] - df["close"].shift()).abs()
+    low_close = (df["low"] - df["close"].shift()).abs()
+
+    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+
+    df["atr"] = true_range.rolling(14).mean()
+    df["volume_sma20"] = df["volume"].rolling(20).mean()
+
+    df["recent_high_20"] = df["high"].rolling(20).max()
+    df["recent_low_20"] = df["low"].rolling(20).min()
+
+    return df
+
+
+# -----------------------------
+# Strategy logic
+# -----------------------------
+
+def get_trade_style():
+    if INTERVAL in ["1m", "3m", "5m", "15m"]:
+        return "scalping"
+
+    if INTERVAL in ["30m", "1h", "2h", "4h"]:
+        return "day"
+
+    return "swing"
+
+
+def calculate_confidence_score(row, previous_row, side):
+    score = 0
+
+    close = row["close"]
+    ema20 = row["ema20"]
+    ema50 = row["ema50"]
+    ema200 = row["ema200"]
+    rsi = row["rsi"]
+    macd = row["macd"]
+    macd_signal = row["macd_signal"]
+    volume = row["volume"]
+    volume_sma20 = row["volume_sma20"]
+    atr = row["atr"]
+
+    recent_high = previous_row["recent_high_20"]
+    recent_low = previous_row["recent_low_20"]
+
+    if pd.isna(rsi) or pd.isna(atr) or pd.isna(volume_sma20):
+        return 0
+
+    if side == "LONG":
+        if ema20 > ema50 > ema200:
+            score += 30
+        elif ema20 > ema50:
+            score += 20
+        elif close > ema200:
+            score += 10
+    else:
+        if ema20 < ema50 < ema200:
+            score += 30
+        elif ema20 < ema50:
+            score += 20
+        elif close < ema200:
+            score += 10
+
+    if side == "LONG":
+        if macd > macd_signal and macd > 0:
+            score += 20
+        elif macd > macd_signal:
+            score += 12
+    else:
+        if macd < macd_signal and macd < 0:
+            score += 20
+        elif macd < macd_signal:
+            score += 12
+
+    if side == "LONG":
+        if 50 <= rsi <= 68:
+            score += 15
+        elif 45 <= rsi < 50:
+            score += 8
+    else:
+        if 32 <= rsi <= 50:
+            score += 15
+        elif 50 < rsi <= 55:
+            score += 8
+
+    if volume > volume_sma20 * 1.3:
+        score += 15
+    elif volume > volume_sma20:
+        score += 8
+
+    if side == "LONG":
+        if close > recent_high:
+            score += 10
+        elif close > ema20:
+            score += 5
+    else:
+        if close < recent_low:
+            score += 10
+        elif close < ema20:
+            score += 5
+
+    atr_percent = (atr / close) * 100
+
+    if 0.3 <= atr_percent <= 4.0:
+        score += 10
+    elif 0.15 <= atr_percent < 0.3:
+        score += 5
+
+    return min(score, 100)
+
+
+def build_signal(symbol, df):
+    df = add_indicators(df)
+
+    if len(df) < 220:
+        return None
+
+    row = df.iloc[-1]
+    previous_row = df.iloc[-2]
+
+    long_score = calculate_confidence_score(row, previous_row, "LONG")
+    short_score = calculate_confidence_score(row, previous_row, "SHORT")
+
+    if long_score >= short_score:
+        side = "LONG"
+        confidence_score = long_score
+    else:
+        side = "SHORT"
+        confidence_score = short_score
+
+    if confidence_score < MIN_CONFIDENCE_SCORE:
+        return None
+
+    entry = float(row["close"])
+    atr = float(row["atr"])
+
+    if atr <= 0:
+        return None
+
+    leverage = LEVERAGE_LEVELS[0]
+    trade_style = get_trade_style()
+    multipliers = TARGET_MULTIPLIERS.get(trade_style, TARGET_MULTIPLIERS["day"])
+
+    stop_distance = atr * 1.25
+
+    if side == "LONG":
+        stop_loss = entry - stop_distance
+        targets = [entry + (stop_distance * m) for m in multipliers]
+    else:
+        stop_loss = entry + stop_distance
+        targets = [entry - (stop_distance * m) for m in multipliers]
+
+    signal_key = f"{today_key()}:{symbol}:{side}"
+
+    return {
+        "signal_key": signal_key,
+        "date": today_key(),
+        "time": now_local().strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol": symbol,
+        "side": side,
+        "direction": side,
+        "entry": entry,
+        "entry_price": entry,
+        "stop_loss": stop_loss,
+        "targets": targets,
+        "targets_hit": [],
+        "confidence_score": confidence_score,
+        "leverage": leverage,
+        "risk_percent": RISK_PERCENT,
+        "trade_style": trade_style,
+        "interval": INTERVAL,
+        "rsi": float(row["rsi"]),
+        "atr": atr,
+        "status": "OPEN",
+        "opened_at": now_local().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+
+# -----------------------------
+# Open and closed trades
+# -----------------------------
 
 def load_open_trades():
-    return load_json_file(OPEN_TRADES_FILE, [])
+    return read_json_file(OPEN_TRADES_FILE, [])
 
 
-def save_open_trades(trades):
-    save_json_file(OPEN_TRADES_FILE, trades)
+def save_open_trades(open_trades):
+    write_json_file(OPEN_TRADES_FILE, open_trades)
 
 
 def load_closed_trades():
-    return load_json_file(CLOSED_TRADES_FILE, [])
+    return read_json_file(CLOSED_TRADES_FILE, [])
 
 
-def save_closed_trades(trades):
-    save_json_file(CLOSED_TRADES_FILE, trades)
+def save_closed_trades(closed_trades):
+    write_json_file(CLOSED_TRADES_FILE, closed_trades)
 
 
-def within_time_window(now: datetime, window: Tuple[str, str]) -> bool:
-    start_hour, start_minute = map(int, window[0].split(":"))
-    end_hour, end_minute = map(int, window[1].split(":"))
-
-    start = now.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
-    end = now.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
-
-    if start <= end:
-        return start <= now <= end
-
-    return now >= start or now <= end
-
-
-def get_current_window(now: datetime, state: dict) -> Optional[str]:
-    if not state["morning_signal_sent"] and within_time_window(now, MORNING_SIGNAL_WINDOW):
-        return "morning"
-
-    if not state["evening_signal_sent"] and within_time_window(now, EVENING_SIGNAL_WINDOW):
-        return "evening"
-
-    return None
-
-
-def load_klines(client, symbol, interval, limit):
-    raw = client.get_klines(symbol=symbol, interval=interval, limit=limit)
-
-    df = pd.DataFrame(raw, columns=[
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "quote_asset_volume", "num_trades",
-        "taker_buy_base_asset_volume", "taker_buy_quote_asset_volume", "ignore",
-    ])
-
-    df[["open", "high", "low", "close", "volume"]] = df[
-        ["open", "high", "low", "close", "volume"]
-    ].astype(float)
-
-    df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
-    df["close_time"] = pd.to_datetime(df["close_time"], unit="ms")
-    return df
-
-
-def interval_to_minutes(interval: str) -> int:
-    if interval.endswith("m"):
-        return int(interval[:-1])
-    if interval.endswith("h"):
-        return int(interval[:-1]) * 60
-    if interval.endswith("d"):
-        return int(interval[:-1]) * 60 * 24
-    return 60
-
-
-def compute_indicators(df):
-    df["ema9"] = EMAIndicator(df["close"], window=9).ema_indicator()
-    df["ema21"] = EMAIndicator(df["close"], window=21).ema_indicator()
-    df["ema50"] = EMAIndicator(df["close"], window=50).ema_indicator()
-    df["ema200"] = EMAIndicator(df["close"], window=200).ema_indicator()
-
-    df["rsi"] = RSIIndicator(df["close"], window=14).rsi()
-
-    macd = MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
-    df["macd"] = macd.macd()
-    df["macd_signal"] = macd.macd_signal()
-
-    df["atr"] = AverageTrueRange(
-        df["high"], df["low"], df["close"], window=14
-    ).average_true_range()
-
-    df["volume_sma"] = df["volume"].rolling(20).mean()
-
-    return df
-
-
-def get_current_price(client, symbol):
-    ticker = client.get_symbol_ticker(symbol=symbol)
-    return float(ticker["price"])
-
-
-def build_signal(df, symbol, leverage):
-    row = df.iloc[-1]
-    price = row["close"]
-
-    latest_close = df["close_time"].iloc[-1]
-    now = datetime.now(timezone.utc)
-    interval_minutes = interval_to_minutes(INTERVAL)
-
-    if now > latest_close + pd.Timedelta(minutes=interval_minutes + 8):
-        print(
-            f"⚠️ Stale signal data for {symbol}: latest candle closed at "
-            f"{latest_close.isoformat()}, skipping."
-        )
-        return None
-
-    if pd.isna(row["ema200"]) or pd.isna(row["volume_sma"]) or pd.isna(row["atr"]):
-        return None
-
-    atr = max(row["atr"], price * 0.0015)
-
-    bullish_trend = row["ema50"] > row["ema200"]
-    bearish_trend = row["ema50"] < row["ema200"]
-
-    volume_ok = row["volume"] > row["volume_sma"] * 1.2
-    atr_ok = row["atr"] > price * 0.0015
-    trend_strength_ok = abs(row["ema50"] - row["ema200"]) > price * 0.002
-
-    long_bias = (
-        bullish_trend
-        and row["ema9"] > row["ema21"] > row["ema50"] > row["ema200"]
-        and 45 <= row["rsi"] <= 68
-        and row["macd"] > row["macd_signal"]
-        and volume_ok
-        and atr_ok
-        and trend_strength_ok
-    )
-
-    short_bias = (
-        bearish_trend
-        and row["ema9"] < row["ema21"] < row["ema50"] < row["ema200"]
-        and 32 <= row["rsi"] <= 55
-        and row["macd"] < row["macd_signal"]
-        and volume_ok
-        and atr_ok
-        and trend_strength_ok
-    )
-
-    print(f"\n📊 Analysis for {symbol}")
-    print(f"Price: {price:.6f}")
-    print(f"RSI: {row['rsi']:.2f}")
-    print(f"Volume OK: {volume_ok}")
-    print(f"ATR OK: {atr_ok}")
-    print(f"Trend strength OK: {trend_strength_ok}")
-
-    if long_bias:
-        direction = "Long"
-        entry_low = price - atr * 0.4
-        entry_high = price + atr * 0.25
-        stop_loss = price - atr * 1.4
-
-    elif short_bias:
-        direction = "Short"
-        entry_low = price - atr * 0.25
-        entry_high = price + atr * 0.4
-        stop_loss = price + atr * 1.4
-
-    else:
-        print("⚪️ No high-quality signal.")
-        return None
-
-    all_targets = []
-
-    for _, multipliers in TARGET_MULTIPLIERS.items():
-        for mult in multipliers:
-            if direction == "Long":
-                tp = price + atr * mult
-            else:
-                tp = price - atr * mult
-
-            all_targets.append(round(tp, 6))
-
-    if direction == "Long":
-        all_targets = sorted(all_targets)
-    else:
-        all_targets = sorted(all_targets, reverse=True)
-
-    return {
-        "id": f"{symbol}_{int(time.time())}",
-        "symbol": symbol,
-        "direction": direction,
-        "entry_price": round(price, 6),
-        "entry_range": [round(entry_low, 6), round(entry_high, 6)],
-        "stop_loss": round(stop_loss, 6),
-        "original_stop_loss": round(stop_loss, 6),
-        "breakeven_stop": round(price, 6),
-        "targets": all_targets,
-        "tp1": all_targets[0],
-        "final_tp": all_targets[-1],
-        "tp1_hit": False,
-        "status": "OPEN",
-        "leverage": leverage,
-        "rsi": round(row["rsi"], 2),
-        "atr": round(atr, 6),
-        "opened_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-    }
-
-
-def format_signal(signal):
-    return f"""
-🎯 NEW SIGNAL ALERT! ✅
-
-{signal['symbol']} {signal['direction']}
-🔰 Leverage: {signal['leverage']}x
-
-🎯 TP1: {signal['tp1']}
-🏁 Final TP: {signal['final_tp']}
-🚭 Stop loss: {signal['stop_loss']}
-
-📊 RSI: {signal['rsi']}
-🧮 ATR: {signal['atr']}
-⏰ {signal['opened_at']}
-
-⚠️ Not financial advice. Manage your risk.
-""".strip()
-
-
-def format_trade_update(trade, current_price, event_label, pnl_percent, hit_count=None):
-    total_tps = len(trade.get("targets", []))
-    hit_count = hit_count if hit_count is not None else (
-        total_tps if event_label == "FINAL TP" else 1
-    )
-    now = datetime.now(timezone.utc)
-    timestamp = f"{now.month}/{now.day}/{now.year}, {now.strftime('%I:%M:%S %p').lstrip('0')}"
-
-    title = f"🎯 {event_label} HIT! ✅"
-    if event_label == "STOP LOSS":
-        title = "🔴 STOP LOSS HIT"
-
-    return f"""
-{title}
-
-{trade['symbol']} {trade['direction']}
-🎯 {event_label}: {current_price}
-💲 Current: {current_price}
-📊 P&L: {pnl_percent:+.2f}%
-⚡ Leverage: {trade['leverage']}x
-✅ {hit_count}/{total_tps} TPs reached
-⏰ {timestamp}
-📺 Binance Futures SIGNALS
-""".strip()
-
-
-def send_message_to_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-    }
-
-    response = requests.post(url, data=payload, timeout=20)
-
-    if response.status_code == 200:
-        print("✅ Message sent to Telegram.")
-    else:
-        print(f"Telegram error: {response.status_code} - {response.text}")
-
-
-def send_photo_to_telegram(photo_path, caption=""):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-
-    with open(photo_path, "rb") as photo:
-        files = {"photo": photo}
-        data = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "caption": caption,
-        }
-
-        response = requests.post(url, files=files, data=data, timeout=30)
-
-    if response.status_code == 200:
-        print("✅ Result card sent to Telegram.")
-    else:
-        print(f"Telegram photo error: {response.status_code} - {response.text}")
-
-
-def calculate_pnl_percent(trade, close_price):
-    entry = trade["entry_price"]
-    leverage = trade["leverage"]
-
-    if trade["direction"] == "Long":
-        raw_percent = ((close_price - entry) / entry) * 100
-    else:
-        raw_percent = ((entry - close_price) / entry) * 100
-
-    return round(raw_percent * leverage, 2)
-
-
-def create_result_card(trade, pnl_percent, current_price, event_label="CLOSED"):
-    width = 1000
-    height = 1200
-
-    img = Image.new("RGB", (width, height), color=(12, 16, 38))
-    draw = ImageDraw.Draw(img)
-
-    try:
-        font_big = ImageFont.truetype("arial.ttf", 90)
-        font_medium = ImageFont.truetype("arial.ttf", 56)
-        font_small = ImageFont.truetype("arial.ttf", 38)
-        font_xsmall = ImageFont.truetype("arial.ttf", 28)
-    except Exception:
-        font_big = ImageFont.load_default()
-        font_medium = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-        font_xsmall = ImageFont.load_default()
-
-    symbol_text = trade["symbol"].replace("USDT", "/USDT")
-    status = trade.get("close_reason", event_label)
-    pnl_text = f"{pnl_percent:+.2f}%"
-    status_color = (0, 255, 140) if pnl_percent >= 0 else (255, 90, 90)
-    event_title = f"{event_label} HIt!" if event_label not in ["STOP LOSS", "BREAKEVEN"] else event_label
-
-    draw.rectangle((0, 0, width, height), fill=(8, 12, 32))
-    draw.rectangle((40, 40, width - 40, 240), fill=(15, 25, 70))
-    draw.text((70, 60), "Binance Futures SIGNALS", fill=(150, 190, 255), font=font_small)
-    draw.text((70, 120), symbol_text, fill=(255, 255, 255), font=font_big)
-    draw.text((70, 210), f"{trade['direction'].upper()} • {trade['leverage']}x", fill=(120, 255, 190), font=font_medium)
-
-    draw.rectangle((40, 270, width - 40, 560), fill=(17, 26, 90), radius=30)
-    draw.text((70, 300), pnl_text, fill=status_color, font=font_big)
-    draw.text((70, 420), "REALIZED PNL" if event_label in ["FINAL TP", "TP1"] else "P&L", fill=(204, 214, 230), font=font_small)
-    draw.text((70, 470), f"{event_label} • {current_price}", fill=(190, 210, 255), font=font_small)
-
-    draw.line((70, 590, width - 70, 590), fill=(50, 70, 110), width=3)
-
-    rows = [
-        ("ENTRY", trade["entry_price"]),
-        ("CURRENT", current_price),
-        ("TP1", trade["tp1"]),
-        ("FINAL TP", trade["final_tp"]),
-        ("STOP", trade["stop_loss"]),
-        ("STATUS", status),
-    ]
-
-    y = 620
-
-    for label, value in rows:
-        draw.text((70, y), str(label), fill=(160, 170, 195), font=font_small)
-        draw.text((360, y), str(value), fill=(255, 255, 255), font=font_small)
-        y += 70
-
-    draw.line((70, 1040, width - 70, 1040), fill=(50, 70, 110), width=3)
-    draw.text((70, 1060), "Accurate signals • Smart trading • Max profits", fill=(120, 170, 230), font=font_xsmall)
-
-    os.makedirs("result_cards", exist_ok=True)
-    sanitized_label = event_label.replace(" ", "_").replace("/", "_")
-    path = f"result_cards/{trade['id']}_{sanitized_label}.png"
-    img.save(path)
-
-    return path
-
-
-def save_new_open_trade(signal):
+def has_open_trade_for_symbol(symbol):
     open_trades = load_open_trades()
 
     for trade in open_trades:
-        if trade["symbol"] == signal["symbol"] and trade["status"] == "OPEN":
-            print(f"⚠️ Open trade already exists for {signal['symbol']}.")
-            return
+        if trade.get("symbol") == symbol and trade.get("status", "OPEN") == "OPEN":
+            return True
+
+    return False
+
+
+def add_open_trade(signal):
+    open_trades = load_open_trades()
+
+    signal = dict(signal)
+    signal.setdefault("id", f"{signal.get('symbol', 'UNKNOWN')}_{int(time.time())}")
+    signal.setdefault("targets_hit", [])
+    signal.setdefault("status", "OPEN")
+    signal.setdefault("opened_at", now_local().strftime("%Y-%m-%d %H:%M:%S"))
 
     open_trades.append(signal)
     save_open_trades(open_trades)
 
 
-def track_open_trades(client):
-    open_trades = load_open_trades()
+def close_trade(trade, result, close_price):
     closed_trades = load_closed_trades()
+
+    trade = dict(trade)
+    trade["status"] = "CLOSED"
+    trade["result"] = result
+    trade["closed_at"] = now_local().strftime("%Y-%m-%d %H:%M:%S")
+    trade["close_price"] = close_price
+
+    closed_trades.append(trade)
+    save_closed_trades(closed_trades)
+
+
+# -----------------------------
+# Telegram
+# -----------------------------
+
+def format_price(value):
+    value = float(value)
+
+    if value >= 1000:
+        return f"{value:,.2f}"
+
+    if value >= 1:
+        return f"{value:.4f}"
+
+    return f"{value:.8f}"
+
+
+def get_trade_side(trade):
+    side = trade.get("side") or trade.get("direction", "")
+    side = str(side).upper()
+
+    if side == "SHORT":
+        return "SHORT"
+
+    if side == "LONG":
+        return "LONG"
+
+    return None
+
+
+def get_trade_entry(trade):
+    if trade.get("entry") is not None:
+        return float(trade["entry"])
+
+    if trade.get("entry_price") is not None:
+        return float(trade["entry_price"])
+
+    return 0.0
+
+
+def format_signal_message(signal):
+    targets_text = ""
+
+    for index, target in enumerate(signal["targets"], start=1):
+        targets_text += f"TP{index}: {format_price(target)}\n"
+
+    side = signal.get("side") or signal.get("direction")
+    entry = signal.get("entry") if signal.get("entry") is not None else signal.get("entry_price")
+
+    message = f"""
+🚨 FUTURES TRADE SIGNAL 🚨
+
+Pair: {signal["symbol"]}
+Direction: {side}
+Timeframe: {signal["interval"]}
+Style: {signal["trade_style"].upper()}
+
+Entry: {format_price(entry)}
+Stop Loss: {format_price(signal["stop_loss"])}
+
+Targets:
+{targets_text}
+Leverage: {signal["leverage"]}x
+Risk: {signal["risk_percent"]}%
+
+Confidence Score: {signal["confidence_score"]}/100
+RSI: {signal["rsi"]:.2f}
+
+Signals Today: {load_signal_state()["signals_sent_today"] + 1}/{MAX_SIGNALS_PER_DAY}
+
+⚠️ Trade carefully. No signal is guaranteed.
+""".strip()
+
+    return message
+
+
+def format_tp_hit_message(trade, target_index, target_price, current_price):
+    side = trade.get("side") or trade.get("direction")
+    entry = get_trade_entry(trade)
+
+    total_targets = len(trade["targets"])
+    targets_hit = len(trade.get("targets_hit", []))
+
+    message = f"""
+✅ TARGET HIT ✅
+
+Pair: {trade["symbol"]}
+Direction: {side}
+
+TP{target_index} Hit: {format_price(target_price)}
+Current Price: {format_price(current_price)}
+
+Entry: {format_price(entry)}
+Stop Loss: {format_price(trade["stop_loss"])}
+
+Targets Hit: {targets_hit}/{total_targets}
+
+Trade still active.
+""".strip()
+
+    return message
+
+
+def format_stop_loss_message(trade, current_price):
+    side = trade.get("side") or trade.get("direction")
+    entry = get_trade_entry(trade)
+
+    targets_hit = trade.get("targets_hit", [])
+
+    if targets_hit:
+        partial_text = f"Targets hit before SL: {len(targets_hit)}/{len(trade['targets'])}"
+    else:
+        partial_text = "No targets were hit before SL."
+
+    message = f"""
+❌ STOP LOSS HIT ❌
+
+Pair: {trade["symbol"]}
+Direction: {side}
+
+Entry: {format_price(entry)}
+Stop Loss: {format_price(trade["stop_loss"])}
+Current Price: {format_price(current_price)}
+
+{partial_text}
+
+Trade closed.
+""".strip()
+
+    return message
+
+
+def format_final_target_message(trade, current_price):
+    side = trade.get("side") or trade.get("direction")
+    entry = get_trade_entry(trade)
+
+    message = f"""
+🏁 TRADE CLOSED IN PROFIT 🏁
+
+Pair: {trade["symbol"]}
+Direction: {side}
+
+All targets hit.
+
+Entry: {format_price(entry)}
+Final Price: {format_price(current_price)}
+
+Result: ✅ Full TP completed
+""".strip()
+
+    return message
+
+
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+
+    response = requests.post(url, data=payload, timeout=15)
+    response.raise_for_status()
+
+    return response.json()
+
+
+# -----------------------------
+# Result monitoring
+# -----------------------------
+
+def is_target_hit(side, current_price, target_price):
+    if side == "LONG":
+        return current_price >= target_price
+
+    if side == "SHORT":
+        return current_price <= target_price
+
+    return False
+
+
+def is_stop_loss_hit(side, current_price, stop_loss):
+    if side == "LONG":
+        return current_price <= stop_loss
+
+    if side == "SHORT":
+        return current_price >= stop_loss
+
+    return False
+
+
+def monitor_open_trades():
+    if not RESULT_MONITOR_ENABLED:
+        return
+
+    open_trades = load_open_trades()
 
     if not open_trades:
         return
+
+    print("Checking open trades for TP/SL results...")
 
     updated_open_trades = []
 
     for trade in open_trades:
         try:
-            current_price = get_current_price(client, trade["symbol"])
+            if trade.get("status", "OPEN") != "OPEN":
+                continue
 
-            direction = trade["direction"]
+            symbol = trade["symbol"]
+            side = get_trade_side(trade)
 
-            tp1_hit_now = (
-                direction == "Long" and current_price >= trade["tp1"]
-            ) or (
-                direction == "Short" and current_price <= trade["tp1"]
-            )
-
-            final_tp_hit = (
-                direction == "Long" and current_price >= trade["final_tp"]
-            ) or (
-                direction == "Short" and current_price <= trade["final_tp"]
-            )
-
-            stop_hit = (
-                direction == "Long" and current_price <= trade["stop_loss"]
-            ) or (
-                direction == "Short" and current_price >= trade["stop_loss"]
-            )
-
-            if not trade["tp1_hit"] and tp1_hit_now:
-                trade["tp1_hit"] = True
-                trade["stop_loss"] = trade["breakeven_stop"]
-                pnl = calculate_pnl_percent(trade, current_price)
-                message = format_trade_update(
-                    trade,
-                    current_price,
-                    "TP1",
-                    pnl,
-                    hit_count=1,
-                )
-                print(message)
-                send_message_to_telegram(message)
-
-                card_path = create_result_card(
-                    trade,
-                    pnl,
-                    current_price,
-                    event_label="TP1"
-                )
-                send_photo_to_telegram(card_path, f"✅ TP1 HIT • {trade['symbol']} • {pnl:+.2f}%")
-
+            if side is None:
+                print(f"{symbol}: invalid trade direction.")
                 updated_open_trades.append(trade)
                 continue
 
-            if final_tp_hit:
-                trade["status"] = "CLOSED"
-                trade["close_price"] = round(current_price, 6)
-                trade["closed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                trade["close_reason"] = "FINAL TP HIT"
+            stop_loss = float(trade["stop_loss"])
+            targets = [float(t) for t in trade["targets"]]
+            current_price = fetch_current_price(symbol)
 
-                pnl = calculate_pnl_percent(trade, current_price)
-                trade["pnl_percent"] = pnl
+            # Proximity alerts: notify when price is within PROXIMITY_PERCENT of any TP or the stop
+            try:
+                proximity_list = trade.get("proximity_alerts", [])
 
-                closed_trades.append(trade)
+                # targets proximity
+                for idx, target_price in enumerate(targets, start=1):
+                    if idx in proximity_list:
+                        continue
+                    if abs(current_price - target_price) / target_price <= (PROXIMITY_PERCENT / 100.0):
+                        pnl_now = calculate_pnl_percent(trade, current_price)
+                        msg = format_tp_hit_message(trade, target_index=idx, target_price=target_price, current_price=current_price)
+                        # reuse TP message format but mark as NEAR instead of hit
+                        msg = msg.replace("TP", "NEAR TP")
+                        print(msg)
+                        send_telegram_message(msg)
+                        # save small card
+                        try:
+                            card = create_result_card(trade, pnl_now, current_price, event_label=f"NEAR_TP_{idx}")
+                            send_photo_to_telegram(card, f"⚡ Near TP{idx} • {trade['symbol']} • {pnl_now:+.2f}%")
+                        except Exception:
+                            pass
+                        proximity_list.append(idx)
 
-                message = format_trade_update(
-                    trade,
-                    current_price,
-                    "FINAL TP",
-                    pnl,
-                    hit_count=len(trade.get("targets", [])),
+                # stop proximity
+                if not trade.get("stop_proximity_notified", False):
+                    if abs(current_price - stop_loss) / stop_loss <= (PROXIMITY_PERCENT / 100.0):
+                        pnl_now = calculate_pnl_percent(trade, current_price)
+                        msg = format_stop_loss_message(trade, current_price)
+                        msg = msg.replace("STOP LOSS", "NEAR STOP")
+                        print(msg)
+                        send_telegram_message(msg)
+                        try:
+                            card = create_result_card(trade, pnl_now, current_price, event_label="NEAR_STOP")
+                            send_photo_to_telegram(card, f"⚠️ Near Stop • {trade['symbol']} • {pnl_now:+.2f}%")
+                        except Exception:
+                            pass
+                        trade["stop_proximity_notified"] = True
+
+                trade["proximity_alerts"] = proximity_list
+            except Exception:
+                pass
+
+            if "targets_hit" not in trade:
+                trade["targets_hit"] = []
+
+            targets_hit = set(int(x) for x in trade.get("targets_hit", []))
+
+            # Stop loss check
+            if is_stop_loss_hit(side, current_price, stop_loss):
+                message = format_stop_loss_message(trade, current_price)
+                send_telegram_message(message)
+
+                close_trade(
+                    trade=trade,
+                    result="STOP_LOSS_HIT",
+                    close_price=current_price
                 )
-                print(message)
-                send_message_to_telegram(message)
 
-                card_path = create_result_card(
-                    trade,
-                    pnl,
-                    current_price,
-                    event_label="FINAL TP"
-                )
-                send_photo_to_telegram(card_path, f"✅ {trade['symbol']} FINAL TP • {pnl:+.2f}%")
-
+                print(f"{symbol}: stop loss hit. Trade closed.")
+                time.sleep(2)
                 continue
 
-            if stop_hit:
-                trade["status"] = "CLOSED"
-                trade["close_price"] = round(current_price, 6)
-                trade["closed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            # Target check
+            new_target_hits = []
 
-                if trade["tp1_hit"]:
-                    trade["close_reason"] = "BREAKEVEN AFTER TP1"
-                    event_label = "BREAKEVEN"
-                    hit_count = 1
-                else:
-                    trade["close_reason"] = "STOP LOSS HIT"
-                    event_label = "STOP LOSS"
-                    hit_count = 0
+            for index, target_price in enumerate(targets, start=1):
+                if index in targets_hit:
+                    continue
 
-                pnl = calculate_pnl_percent(trade, current_price)
-                trade["pnl_percent"] = pnl
+                if is_target_hit(side, current_price, target_price):
+                    targets_hit.add(index)
+                    new_target_hits.append((index, target_price))
 
-                closed_trades.append(trade)
+            trade["targets_hit"] = sorted(list(targets_hit))
 
-                message = format_trade_update(
-                    trade,
-                    current_price,
-                    event_label,
-                    pnl,
-                    hit_count=hit_count,
+            for target_index, target_price in new_target_hits:
+                if POST_EACH_TP_HIT:
+                    message = format_tp_hit_message(
+                        trade=trade,
+                        target_index=target_index,
+                        target_price=target_price,
+                        current_price=current_price
+                    )
+
+                    send_telegram_message(message)
+                    print(f"{symbol}: TP{target_index} hit.")
+                    time.sleep(2)
+
+            # Close trade if all targets are hit
+            if CLOSE_TRADE_ON_FINAL_TP and len(trade["targets_hit"]) == len(targets):
+                message = format_final_target_message(trade, current_price)
+                send_telegram_message(message)
+
+                close_trade(
+                    trade=trade,
+                    result="ALL_TARGETS_HIT",
+                    close_price=current_price
                 )
-                print(message)
-                send_message_to_telegram(message)
 
-                card_path = create_result_card(
-                    trade,
-                    pnl,
-                    current_price,
-                    event_label=event_label
-                )
-                send_photo_to_telegram(card_path, f"📊 {trade['symbol']} CLOSED • {pnl:+.2f}%")
-
+                print(f"{symbol}: all targets hit. Trade closed.")
+                time.sleep(2)
                 continue
 
             updated_open_trades.append(trade)
 
-        except Exception as exc:
-            print(f"❌ Failed to track {trade.get('symbol')}: {exc}")
+        except Exception as e:
+            print(f"Error monitoring trade {trade.get('symbol', 'UNKNOWN')}: {e}")
             updated_open_trades.append(trade)
 
     save_open_trades(updated_open_trades)
-    save_closed_trades(closed_trades)
 
 
-def run_bot(is_manual=False):
-    if not BINANCE_API_KEY or not BINANCE_API_SECRET:
-        raise SystemExit("Set Binance API credentials in config.py")
+# -----------------------------
+# Main scanning logic
+# -----------------------------
 
-    client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+def scan_market():
+    print(f"\n[{now_local().strftime('%Y-%m-%d %H:%M:%S')}] Scanning market...")
 
-    track_open_trades(client)
-
-    state = load_state()
-
-    current_date = datetime.now(timezone.utc).date()
-    last_reset_date = datetime.fromisoformat(state["last_reset_date"]).date()
-
-    if current_date != last_reset_date:
-        state = {
-            "last_reset_date": current_date.isoformat(),
-            "signals_sent_today": 0,
-            "morning_signal_sent": False,
-            "evening_signal_sent": False,
-            "sent_symbols_today": [],
-        }
-        save_state(state)
-        print("✅ Daily signal counter reset.")
-
-    if state["signals_sent_today"] >= MAX_SIGNALS_PER_DAY:
-        print(f"⚠️ Daily signal limit reached: {MAX_SIGNALS_PER_DAY}")
+    if not is_manual_mode() and not is_signal_window_open():
+        print("Outside signal window. No scan posted.")
         return
 
-    current_window = None
+    if remaining_daily_slots() <= 0:
+        print("Daily signal limit reached. No more signals today.")
+        return
 
-    if not is_manual:
-        current_window = get_current_window(datetime.now(timezone.utc), state)
-
-        if current_window is None:
-            print("⏳ No scheduled signal window is open.")
-            return
-
-    print("\n🚀 Running high-quality market scan...\n")
+    candidates = []
 
     for symbol in SYMBOLS:
-        if state["signals_sent_today"] >= MAX_SIGNALS_PER_DAY:
-            break
-
-        if symbol in state["sent_symbols_today"]:
-            print(f"⏭️ Skipping {symbol}, already sent today.")
-            continue
-
         try:
-            print(f"\n📡 Scanning {symbol}...")
-
-            df = load_klines(client, symbol, INTERVAL, CANDLE_LIMIT)
-            df = compute_indicators(df)
-
-            leverage = LEVERAGE_LEVELS[0]
-            signal = build_signal(df, symbol, leverage)
-
-            if signal is None:
+            if has_open_trade_for_symbol(symbol):
+                print(f"{symbol}: skipped because an open trade already exists.")
                 continue
 
-            message = format_signal(signal)
-            print(message)
+            df = fetch_futures_klines(symbol)
+            signal = build_signal(symbol, df)
 
-            send_message_to_telegram(message)
-            save_new_open_trade(signal)
+            if signal is None:
+                print(f"{symbol}: no high-confidence setup.")
+                continue
 
-            state["signals_sent_today"] += 1
-            state["sent_symbols_today"].append(symbol)
+            if already_posted_signal(signal["signal_key"]):
+                print(f'{symbol}: signal already posted today.')
+                continue
 
-            if not is_manual and current_window:
-                state[f"{current_window}_signal_sent"] = True
+            candidates.append(signal)
+            print(
+                f'{symbol}: candidate found '
+                f'{signal["side"]} '
+                f'with score {signal["confidence_score"]}/100.'
+            )
 
-            save_state(state)
+        except Exception as e:
+            print(f"{symbol}: error while scanning - {e}")
 
-            print(f"✅ Signal #{state['signals_sent_today']} sent today.")
-            time.sleep(10)
+    if not candidates:
+        print("No strong signals found.")
+        return
 
-        except Exception as exc:
-            print(f"❌ Failed to analyze {symbol}: {exc}")
+    candidates.sort(key=lambda x: x["confidence_score"], reverse=True)
+
+    slots = remaining_daily_slots()
+    signals_to_post = candidates[:slots]
+
+    for signal in signals_to_post:
+        try:
+            message = format_signal_message(signal)
+            send_telegram_message(message)
+
+            mark_signal_posted(signal["signal_key"])
+            add_open_trade(signal)
+
+            print(
+                f'Posted {signal["symbol"]} {signal["side"]} '
+                f'with score {signal["confidence_score"]}/100.'
+            )
+
+            time.sleep(2)
+
+        except Exception as e:
+            print(f'Failed to post {signal["symbol"]}: {e}')
 
 
-if __name__ == "__main__":
-    manual_run = MANUAL_OVERRIDE_FLAG in sys.argv[1:]
+def main():
+    print("Futures trading signal bot started.")
+    print(f"Max signals per day: {MAX_SIGNALS_PER_DAY}")
+    print(f"Minimum confidence score: {MIN_CONFIDENCE_SCORE}")
+    print(f"Timezone: {BOT_TIMEZONE}")
 
-    if manual_run:
-        print("⚠️ Manual override enabled.")
+    if is_manual_mode():
+        print("Manual mode enabled. Signal windows will be ignored.")
+
+    # One-shot open-trades check when requested
+    if MANUAL_CHECK_FLAG in sys.argv:
+        print("Manual check flag detected. Running open-trades monitor once.")
+        monitor_open_trades()
+        return
+
+    if is_once_mode():
+        monitor_open_trades()
+        scan_market()
+        return
+
+    last_market_scan = 0
 
     while True:
         try:
-            run_bot(manual_run)
-            print("\n😴 Sleeping for 5 minutes...\n")
-            time.sleep(300)
+            monitor_open_trades()
 
-        except Exception as exc:
-            print(f"❌ Bot crashed: {exc}")
-            print("Retrying in 60 seconds...\n")
-            time.sleep(60)
+            current_time = time.time()
+
+            if current_time - last_market_scan >= SCAN_INTERVAL_SECONDS:
+                scan_market()
+                last_market_scan = current_time
+
+        except Exception as e:
+            print(f"Main loop error: {e}")
+
+        print(f"Sleeping for {RESULT_CHECK_INTERVAL_SECONDS} seconds...")
+        time.sleep(RESULT_CHECK_INTERVAL_SECONDS)
+
+
+if __name__ == "__main__":
+    main()

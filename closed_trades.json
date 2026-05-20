@@ -1,1 +1,74 @@
-[]
+[
+  {
+    "id": "RUNEUSDT_1779220379",
+    "symbol": "RUNEUSDT",
+    "direction": "Short",
+    "entry_price": 0.444,
+    "entry_range": [
+      0.44236,
+      0.446624
+    ],
+    "stop_loss": 0.453185,
+    "original_stop_loss": 0.453185,
+    "breakeven_stop": 0.444,
+    "targets": [
+      0.43908,
+      0.434159,
+      0.427599,
+      0.421038,
+      0.411197,
+      0.401356,
+      0.388235,
+      0.375114
+    ],
+    "tp1": 0.43908,
+    "final_tp": 0.375114,
+    "tp1_hit": false,
+    "targets_hit": [],
+    "status": "CLOSED",
+    "leverage": 10,
+    "rsi": 43.88,
+    "atr": 0.006561,
+    "opened_at": "2026-05-19 19:52:59 UTC",
+    "close_price": 0.454,
+    "closed_at": "2026-05-20 07:23:18 UTC",
+    "close_reason": "STOP LOSS HIT",
+    "pnl_percent": -22.52
+  },
+  {
+    "id": "RUNEUSDT_1779220379",
+    "symbol": "RUNEUSDT",
+    "direction": "Short",
+    "entry_price": 0.444,
+    "entry_range": [
+      0.44236,
+      0.446624
+    ],
+    "stop_loss": 0.453185,
+    "original_stop_loss": 0.453185,
+    "breakeven_stop": 0.444,
+    "targets": [
+      0.43908,
+      0.434159,
+      0.427599,
+      0.421038,
+      0.411197,
+      0.401356,
+      0.388235,
+      0.375114
+    ],
+    "tp1": 0.43908,
+    "final_tp": 0.375114,
+    "tp1_hit": false,
+    "targets_hit": [],
+    "status": "CLOSED",
+    "leverage": 10,
+    "rsi": 43.88,
+    "atr": 0.006561,
+    "opened_at": "2026-05-19 19:52:59 UTC",
+    "close_price": 0.454,
+    "closed_at": "2026-05-20 07:23:53 UTC",
+    "close_reason": "STOP LOSS HIT",
+    "pnl_percent": -22.52
+  }
+]
