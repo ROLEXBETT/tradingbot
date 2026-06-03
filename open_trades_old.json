@@ -1,0 +1,48 @@
+[
+    {
+        "signal_key": "2026-05-21:XRPUSDT:SHORT",
+        "date": "2026-05-21",
+        "time": "2026-05-21 19:10:33",
+        "symbol": "XRPUSDT",
+        "side": "SHORT",
+        "direction": "SHORT",
+        "entry": 1.3628,
+        "entry_price": 1.3628,
+        "stop_loss": 1.3733178571428573,
+        "targets": [
+            1.3259875,
+            1.3102107142857142,
+            1.2944339285714286
+        ],
+        "targets_hit": [
+            1
+        ],
+        "confidence_score": 80,
+        "leverage": 10,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 34.65517241379297,
+        "atr": 0.008414285714285707,
+        "status": "OPEN",
+        "opened_at": "2026-05-21 19:10:33",
+        "id": "XRPUSDT_1779379840",
+        "stop_proximity_notified": true,
+        "proximity_alerts": [
+            1,
+            2
+        ],
+        "entry_low": 1.349172,
+        "entry_high": 1.376428,
+        "tp_levels": {
+            "scalping": [],
+            "day_trading": [
+                1.3501785714285712,
+                1.343867857142857,
+                1.336505357142857
+            ],
+            "swing_trading": []
+        },
+        "market_regime": "UNKNOWN"
+    }
+]

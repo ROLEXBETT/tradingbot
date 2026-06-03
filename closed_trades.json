@@ -1,74 +1,366 @@
 [
-  {
-    "id": "RUNEUSDT_1779220379",
-    "symbol": "RUNEUSDT",
-    "direction": "Short",
-    "entry_price": 0.444,
-    "entry_range": [
-      0.44236,
-      0.446624
-    ],
-    "stop_loss": 0.453185,
-    "original_stop_loss": 0.453185,
-    "breakeven_stop": 0.444,
-    "targets": [
-      0.43908,
-      0.434159,
-      0.427599,
-      0.421038,
-      0.411197,
-      0.401356,
-      0.388235,
-      0.375114
-    ],
-    "tp1": 0.43908,
-    "final_tp": 0.375114,
-    "tp1_hit": false,
-    "targets_hit": [],
-    "status": "CLOSED",
-    "leverage": 10,
-    "rsi": 43.88,
-    "atr": 0.006561,
-    "opened_at": "2026-05-19 19:52:59 UTC",
-    "close_price": 0.454,
-    "closed_at": "2026-05-20 07:23:18 UTC",
-    "close_reason": "STOP LOSS HIT",
-    "pnl_percent": -22.52
-  },
-  {
-    "id": "RUNEUSDT_1779220379",
-    "symbol": "RUNEUSDT",
-    "direction": "Short",
-    "entry_price": 0.444,
-    "entry_range": [
-      0.44236,
-      0.446624
-    ],
-    "stop_loss": 0.453185,
-    "original_stop_loss": 0.453185,
-    "breakeven_stop": 0.444,
-    "targets": [
-      0.43908,
-      0.434159,
-      0.427599,
-      0.421038,
-      0.411197,
-      0.401356,
-      0.388235,
-      0.375114
-    ],
-    "tp1": 0.43908,
-    "final_tp": 0.375114,
-    "tp1_hit": false,
-    "targets_hit": [],
-    "status": "CLOSED",
-    "leverage": 10,
-    "rsi": 43.88,
-    "atr": 0.006561,
-    "opened_at": "2026-05-19 19:52:59 UTC",
-    "close_price": 0.454,
-    "closed_at": "2026-05-20 07:23:53 UTC",
-    "close_reason": "STOP LOSS HIT",
-    "pnl_percent": -22.52
-  }
+    {
+        "signal_key": "2026-05-25:SOLUSDT:SHORT",
+        "date": "2026-05-25",
+        "time": "2026-05-25 07:29:57",
+        "symbol": "SOLUSDT",
+        "side": "SHORT",
+        "direction": "SHORT",
+        "entry": 85.2,
+        "entry_price": 85.2,
+        "stop_loss": 86.01607142857144,
+        "targets": [
+            82.34375,
+            81.11964285714285,
+            79.89553571428571
+        ],
+        "targets_hit": [],
+        "confidence_score": 80,
+        "leverage": 10,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 49.80079681274904,
+        "atr": 0.6528571428571439,
+        "status": "CLOSED",
+        "opened_at": "2026-05-25 07:29:57",
+        "id": "SOLUSDT_1779683407",
+        "stop_proximity_notified": true,
+        "proximity_alerts": [],
+        "result": "STOP_LOSS_HIT",
+        "closed_at": "2026-05-25 12:00:47",
+        "close_price": 86.04
+    },
+    {
+        "signal_key": "2026-05-25:SOLUSDT:SHORT",
+        "date": "2026-05-25",
+        "time": "2026-05-25 07:29:57",
+        "symbol": "SOLUSDT",
+        "side": "SHORT",
+        "direction": "SHORT",
+        "entry": 85.2,
+        "entry_price": 85.2,
+        "stop_loss": 86.01607142857144,
+        "targets": [
+            82.34375,
+            81.11964285714285,
+            79.89553571428571
+        ],
+        "targets_hit": [],
+        "confidence_score": 80,
+        "leverage": 10,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 49.80079681274904,
+        "atr": 0.6528571428571439,
+        "status": "CLOSED",
+        "opened_at": "2026-05-25 07:29:57",
+        "id": "SOLUSDT_1779683407",
+        "stop_proximity_notified": true,
+        "proximity_alerts": [],
+        "result": "STOP_LOSS_HIT",
+        "closed_at": "2026-05-25 12:00:48",
+        "close_price": 86.04
+    },
+    {
+        "signal_key": "2026-05-25:SOLUSDT:SHORT",
+        "date": "2026-05-25",
+        "time": "2026-05-25 07:29:57",
+        "symbol": "SOLUSDT",
+        "side": "SHORT",
+        "direction": "SHORT",
+        "entry": 85.2,
+        "entry_price": 85.2,
+        "stop_loss": 86.01607142857144,
+        "targets": [
+            82.34375,
+            81.11964285714285,
+            79.89553571428571
+        ],
+        "targets_hit": [],
+        "confidence_score": 80,
+        "leverage": 10,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 49.80079681274904,
+        "atr": 0.6528571428571439,
+        "status": "CLOSED",
+        "opened_at": "2026-05-25 07:29:57",
+        "id": "SOLUSDT_1779683407",
+        "stop_proximity_notified": true,
+        "proximity_alerts": [],
+        "result": "STOP_LOSS_HIT",
+        "closed_at": "2026-05-25 12:00:49",
+        "close_price": 86.04
+    },
+    {
+        "signal_key": "2026-05-25:SOLUSDT:SHORT",
+        "date": "2026-05-25",
+        "time": "2026-05-25 07:29:57",
+        "symbol": "SOLUSDT",
+        "side": "SHORT",
+        "direction": "SHORT",
+        "entry": 85.2,
+        "entry_price": 85.2,
+        "stop_loss": 86.01607142857144,
+        "targets": [
+            82.34375,
+            81.11964285714285,
+            79.89553571428571
+        ],
+        "targets_hit": [],
+        "confidence_score": 80,
+        "leverage": 10,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 49.80079681274904,
+        "atr": 0.6528571428571439,
+        "status": "CLOSED",
+        "opened_at": "2026-05-25 07:29:57",
+        "id": "SOLUSDT_1779683407",
+        "stop_proximity_notified": true,
+        "proximity_alerts": [],
+        "result": "STOP_LOSS_HIT",
+        "closed_at": "2026-05-25 12:01:04",
+        "close_price": 86.05
+    },
+    {
+        "signal_key": "2026-05-23:DOGEUSDT:SHORT",
+        "date": "2026-05-23",
+        "time": "2026-05-23 19:10:03",
+        "symbol": "DOGEUSDT",
+        "side": "SHORT",
+        "direction": "SHORT",
+        "entry": 0.10113,
+        "entry_price": 0.10113,
+        "entry_low": 0.10011869999999999,
+        "entry_high": 0.1021413,
+        "stop_loss": 0.10295034,
+        "targets": [
+            0.10058389799999999,
+            0.100037796,
+            0.09930966,
+            0.098945592,
+            0.097853388,
+            0.09657915,
+            0.09566898,
+            0.09293847
+        ],
+        "tp_levels": {
+            "scalping": [
+                0.10058389799999999,
+                0.100037796,
+                0.09930966
+            ],
+            "day_trading": [
+                0.098945592,
+                0.097853388,
+                0.09657915
+            ],
+            "swing_trading": [
+                0.09566898,
+                0.09293847
+            ]
+        },
+        "targets_hit": [],
+        "confidence_score": 82,
+        "leverage": 5,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 45.48286604361371,
+        "atr": 0.0009242857142857128,
+        "market_regime": "STRONG_TRENDING",
+        "status": "CLOSED",
+        "opened_at": "2026-05-23 19:10:03",
+        "id": "DOGEUSDT_1779552610",
+        "proximity_alerts": [
+            1,
+            2
+        ],
+        "stop_proximity_notified": true,
+        "result": "STOP_LOSS_HIT",
+        "closed_at": "2026-05-25 13:18:57",
+        "close_price": 0.10297024
+    },
+    {
+        "signal_key": "2026-05-23:DOGEUSDT:SHORT",
+        "date": "2026-05-23",
+        "time": "2026-05-23 19:10:03",
+        "symbol": "DOGEUSDT",
+        "side": "SHORT",
+        "direction": "SHORT",
+        "entry": 0.10113,
+        "entry_price": 0.10113,
+        "entry_low": 0.10011869999999999,
+        "entry_high": 0.1021413,
+        "stop_loss": 0.10295034,
+        "targets": [
+            0.10058389799999999,
+            0.100037796,
+            0.09930966,
+            0.098945592,
+            0.097853388,
+            0.09657915,
+            0.09566898,
+            0.09293847
+        ],
+        "tp_levels": {
+            "scalping": [
+                0.10058389799999999,
+                0.100037796,
+                0.09930966
+            ],
+            "day_trading": [
+                0.098945592,
+                0.097853388,
+                0.09657915
+            ],
+            "swing_trading": [
+                0.09566898,
+                0.09293847
+            ]
+        },
+        "targets_hit": [],
+        "confidence_score": 82,
+        "leverage": 5,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 45.48286604361371,
+        "atr": 0.0009242857142857128,
+        "market_regime": "STRONG_TRENDING",
+        "status": "CLOSED",
+        "opened_at": "2026-05-23 19:10:03",
+        "id": "DOGEUSDT_1779552610",
+        "proximity_alerts": [
+            1,
+            2
+        ],
+        "stop_proximity_notified": true,
+        "result": "STOP_LOSS_HIT",
+        "closed_at": "2026-05-25 13:18:57",
+        "close_price": 0.10297024
+    },
+    {
+        "signal_key": "2026-05-23:DOGEUSDT:SHORT",
+        "date": "2026-05-23",
+        "time": "2026-05-23 19:10:03",
+        "symbol": "DOGEUSDT",
+        "side": "SHORT",
+        "direction": "SHORT",
+        "entry": 0.10113,
+        "entry_price": 0.10113,
+        "entry_low": 0.10011869999999999,
+        "entry_high": 0.1021413,
+        "stop_loss": 0.10295034,
+        "targets": [
+            0.10058389799999999,
+            0.100037796,
+            0.09930966,
+            0.098945592,
+            0.097853388,
+            0.09657915,
+            0.09566898,
+            0.09293847
+        ],
+        "tp_levels": {
+            "scalping": [
+                0.10058389799999999,
+                0.100037796,
+                0.09930966
+            ],
+            "day_trading": [
+                0.098945592,
+                0.097853388,
+                0.09657915
+            ],
+            "swing_trading": [
+                0.09566898,
+                0.09293847
+            ]
+        },
+        "targets_hit": [],
+        "confidence_score": 82,
+        "leverage": 5,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 45.48286604361371,
+        "atr": 0.0009242857142857128,
+        "market_regime": "STRONG_TRENDING",
+        "status": "CLOSED",
+        "opened_at": "2026-05-23 19:10:03",
+        "id": "DOGEUSDT_1779552610",
+        "proximity_alerts": [
+            1,
+            2
+        ],
+        "stop_proximity_notified": true,
+        "result": "STOP_LOSS_HIT",
+        "closed_at": "2026-05-25 13:19:01",
+        "close_price": 0.10297024
+    },
+    {
+        "signal_key": "2026-05-23:DOGEUSDT:SHORT",
+        "date": "2026-05-23",
+        "time": "2026-05-23 19:10:03",
+        "symbol": "DOGEUSDT",
+        "side": "SHORT",
+        "direction": "SHORT",
+        "entry": 0.10113,
+        "entry_price": 0.10113,
+        "entry_low": 0.10011869999999999,
+        "entry_high": 0.1021413,
+        "stop_loss": 0.10295034,
+        "targets": [
+            0.10058389799999999,
+            0.100037796,
+            0.09930966,
+            0.098945592,
+            0.097853388,
+            0.09657915,
+            0.09566898,
+            0.09293847
+        ],
+        "tp_levels": {
+            "scalping": [
+                0.10058389799999999,
+                0.100037796,
+                0.09930966
+            ],
+            "day_trading": [
+                0.098945592,
+                0.097853388,
+                0.09657915
+            ],
+            "swing_trading": [
+                0.09566898,
+                0.09293847
+            ]
+        },
+        "targets_hit": [],
+        "confidence_score": 82,
+        "leverage": 5,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 45.48286604361371,
+        "atr": 0.0009242857142857128,
+        "market_regime": "STRONG_TRENDING",
+        "status": "CLOSED",
+        "opened_at": "2026-05-23 19:10:03",
+        "id": "DOGEUSDT_1779552610",
+        "proximity_alerts": [
+            1,
+            2
+        ],
+        "stop_proximity_notified": true,
+        "result": "STOP_LOSS_HIT",
+        "closed_at": "2026-05-25 13:19:04",
+        "close_price": 0.10297
+    }
 ]

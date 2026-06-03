@@ -1,0 +1,238 @@
+[
+    {
+        "signal_key": "2026-05-25:XRPUSDT:LONG",
+        "date": "2026-05-25",
+        "time": "2026-05-25 16:00:37",
+        "symbol": "XRPUSDT",
+        "side": "LONG",
+        "direction": "LONG",
+        "entry": 1.3567,
+        "entry_price": 1.3567,
+        "entry_low": 1.343133,
+        "entry_high": 1.3702670000000001,
+        "stop_loss": 1.3363495,
+        "targets": [
+            1.36280515,
+            1.3689103,
+            1.3770505,
+            1.3811206,
+            1.3933309,
+            1.40757625,
+            1.4177515,
+            1.44827725
+        ],
+        "tp_levels": {
+            "scalping": [
+                1.36280515,
+                1.3689103,
+                1.3770505
+            ],
+            "day_trading": [
+                1.3811206,
+                1.3933309,
+                1.40757625
+            ],
+            "swing_trading": [
+                1.4177515,
+                1.44827725
+            ]
+        },
+        "targets_hit": [
+            1
+        ],
+        "confidence_score": 84,
+        "leverage": 10,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 64.0167364016736,
+        "atr": 0.00643571428571429,
+        "market_regime": "STRONG_TRENDING",
+        "status": "OPEN",
+        "opened_at": "2026-05-25 16:00:37",
+        "id": "XRPUSDT_1779714056",
+        "proximity_alerts": [
+            1,
+            2
+        ]
+    },
+    {
+        "signal_key": "2026-05-25:XRPUSDT:LONG",
+        "date": "2026-05-25",
+        "time": "2026-05-25 16:00:39",
+        "symbol": "XRPUSDT",
+        "side": "LONG",
+        "direction": "LONG",
+        "entry": 1.3567,
+        "entry_price": 1.3567,
+        "entry_low": 1.343133,
+        "entry_high": 1.3702670000000001,
+        "stop_loss": 1.3502642857142857,
+        "targets": [
+            1.3586307142857144,
+            1.3605614285714287,
+            1.3631357142857143,
+            1.3644228571428572,
+            1.3682842857142858,
+            1.3727892857142858,
+            1.376007142857143,
+            1.3856607142857142
+        ],
+        "tp_levels": {
+            "scalping": [
+                1.3586307142857144,
+                1.3605614285714287,
+                1.3631357142857143
+            ],
+            "day_trading": [
+                1.3644228571428572,
+                1.3682842857142858,
+                1.3727892857142858
+            ],
+            "swing_trading": [
+                1.376007142857143,
+                1.3856607142857142
+            ]
+        },
+        "targets_hit": [
+            1,
+            2,
+            3,
+            4
+        ],
+        "confidence_score": 84,
+        "leverage": 10,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 64.0167364016736,
+        "atr": 0.00643571428571429,
+        "market_regime": "STRONG_TRENDING",
+        "status": "OPEN",
+        "opened_at": "2026-05-25 16:00:39",
+        "id": "XRPUSDT_1779714060",
+        "proximity_alerts": []
+    },
+    {
+        "signal_key": "2026-05-25:BNBUSDT:LONG",
+        "date": "2026-05-25",
+        "time": "2026-05-25 18:59:20",
+        "symbol": "BNBUSDT",
+        "side": "LONG",
+        "direction": "LONG",
+        "entry": 668.14,
+        "entry_price": 668.14,
+        "entry_low": 661.4585999999999,
+        "entry_high": 674.8214,
+        "stop_loss": 664.2489285714286,
+        "targets": [
+            669.3073214285714,
+            670.4746428571428,
+            672.0310714285714,
+            672.8092857142857,
+            675.1439285714285,
+            677.8676785714285,
+            679.8132142857143,
+            685.6498214285714
+        ],
+        "tp_levels": {
+            "scalping": [
+                669.3073214285714,
+                670.4746428571428,
+                672.0310714285714
+            ],
+            "day_trading": [
+                672.8092857142857,
+                675.1439285714285,
+                677.8676785714285
+            ],
+            "swing_trading": [
+                679.8132142857143,
+                685.6498214285714
+            ]
+        },
+        "targets_hit": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+        ],
+        "confidence_score": 101,
+        "leverage": 10,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 77.90262172284633,
+        "atr": 3.1128571428571297,
+        "market_regime": "TRENDING",
+        "status": "OPEN",
+        "opened_at": "2026-05-25 18:59:20",
+        "id": "BNBUSDT_1779724780",
+        "proximity_alerts": []
+    },
+    {
+        "signal_key": "2026-05-25:BNBUSDT:LONG",
+        "date": "2026-05-25",
+        "time": "2026-05-25 18:59:20",
+        "symbol": "BNBUSDT",
+        "side": "LONG",
+        "direction": "LONG",
+        "entry": 668.14,
+        "entry_price": 668.14,
+        "entry_low": 661.4585999999999,
+        "entry_high": 674.8214,
+        "stop_loss": 658.1179,
+        "targets": [
+            671.14663,
+            674.1532599999999,
+            678.1621,
+            680.16652,
+            686.1797799999999,
+            693.19525,
+            698.2062999999999,
+            713.23945
+        ],
+        "tp_levels": {
+            "scalping": [
+                671.14663,
+                674.1532599999999,
+                678.1621
+            ],
+            "day_trading": [
+                680.16652,
+                686.1797799999999,
+                693.19525
+            ],
+            "swing_trading": [
+                698.2062999999999,
+                713.23945
+            ]
+        },
+        "targets_hit": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+        ],
+        "confidence_score": 101,
+        "leverage": 10,
+        "risk_percent": 3.0,
+        "trade_style": "day",
+        "interval": "1h",
+        "rsi": 77.90262172284633,
+        "atr": 3.1128571428571297,
+        "market_regime": "TRENDING",
+        "status": "OPEN",
+        "opened_at": "2026-05-25 18:59:20",
+        "id": "BNBUSDT_1779724780",
+        "proximity_alerts": []
+    }
+]
